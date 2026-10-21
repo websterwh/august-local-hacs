@@ -1,5 +1,5 @@
 {
-  "name": "August Local Keypad (Door PINs)",
+  "name": "August Local",
   "codeowners": ["@websterwh"],
   "content_in_root": false,
   "domains": ["lock", "binary_sensor"],
