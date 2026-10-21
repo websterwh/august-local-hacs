@@ -143,27 +143,26 @@ class ConfigFlow(AccountSteps,config_entries.ConfigFlow,domain=DOMAIN):
 
     async def async_step_user(self,user_input=None):
         if self._async_current_entries():return self.async_abort(reason='single_instance_allowed')
-        return self.async_show_menu(step_id='user',menu_options=['existing','ha_account','account'])
+        return self.async_show_menu(step_id='user',menu_options=['enroll','existing','ha_account','account'])
     
-    # TODO: Enable factory-reset enrollment after local testing complete
-    # async def async_step_enroll(self,user_input=None):
-    #     errors={}
-    #     if user_input is not None:
-    #         lock_mac=user_input['lock_mac'].upper().strip()
-    #         if not self._is_valid_mac(lock_mac):errors['base']='invalid_mac'
-    #         else:
-    #             try:
-    #                 enrollment=ASL05Enrollment(lock_mac)
-    #                 key=await enrollment.enroll()
-    #                 data={'address':lock_mac,'key':key.hex()}
-    #                 return await self._finish_account_lock(data)
-    #             except EnrollmentError as exc:errors['base']=str(exc)
-    #     return self.async_show_form(step_id='enroll',errors=errors,data_schema=vol.Schema({vol.Required('lock_mac'):str}))
-    # 
-    # @staticmethod
-    # def _is_valid_mac(mac:str)->bool:
-    #     parts=mac.split(':')
-    #     return len(parts)==6 and all(len(p)==2 and all(c in '0123456789ABCDEF' for c in p) for p in parts)
+    async def async_step_enroll(self,user_input=None):
+        errors={}
+        if user_input is not None:
+            lock_mac=user_input['lock_mac'].upper().strip()
+            if not self._is_valid_mac(lock_mac):errors['base']='invalid_mac'
+            else:
+                try:
+                    enrollment=ASL05Enrollment(lock_mac)
+                    key=await enrollment.enroll()
+                    data={'address':lock_mac,'key':key.hex()}
+                    return await self._finish_account_lock(data)
+                except EnrollmentError as exc:errors['base']=str(exc)
+        return self.async_show_form(step_id='enroll',errors=errors,data_schema=vol.Schema({vol.Required('lock_mac'):str}))
+    
+    @staticmethod
+    def _is_valid_mac(mac:str)->bool:
+        parts=mac.split(':')
+        return len(parts)==6 and all(len(p)==2 and all(c in '0123456789ABCDEF' for c in p) for p in parts)
 
     async def async_step_existing(self,user_input=None):
         entries=self.hass.config_entries.async_entries('yalexs_ble')
@@ -182,7 +181,7 @@ class ConfigFlow(AccountSteps,config_entries.ConfigFlow,domain=DOMAIN):
 
 class OptionsFlow(AccountSteps,config_entries.OptionsFlow):
     async def async_step_init(self,user_input=None):
-        return self.async_show_menu(step_id='init',menu_options=['manage','ha_account','account'])
+        return self.async_show_menu(step_id='init',menu_options=['enroll','manage','ha_account','account'])
 
     async def async_step_manage(self,user_input=None):
         if user_input is not None:return self.async_create_entry(title='',data=dict(self.config_entry.options))

@@ -15,25 +15,28 @@ A Home Assistant custom integration that adds local PIN/keypad management, lock-
 
 ## What this does **not** do
 
-- **No factory commissioning.** A factory-reset lock cannot be enrolled by this integration. You need an already-commissioned lock with an installed owner key.
+- **Factory-reset enrollment supported!** A factory-reset ASL-05 can be enrolled entirely through this integration (no August app needed).
 - **No keypad pairing.** The physical August Smart Keypad must already be paired to the lock through the official app before this integration can program PINs on it. HA-only keypad pairing is unimplemented and unverified.
 - **No PIN readback from the lock.** PIN contents cannot be reliably enumerated from tested ASL-05 firmware (1.1.30). The integration retains PINs it wrote, in its own local storage — it never assumes an unreserved slot is empty, and it never guesses a PIN.
-- **No cloud account required for day-to-day operation.** The August cloud account is used once, optionally, to import the already-provisioned key; local PIN writes do not reach August's servers.
+- **Zero cloud contact.** Factory-reset enrollment is entirely local (BLE only). August cloud account is never needed.
 
 ## Requirements
 
 - Home Assistant 2024.1+
-- A Bluetooth adapter or proxy (e.g. ESPHome Bluetooth proxy) within range of the lock
-- An August ASL-05 lock already commissioned with an installed Bluetooth offline key (via the official August app, at least once)
-- The [Yale Access Bluetooth](https://www.home-assistant.io/integrations/yalexs_ble/) integration already set up and working for that lock
+- A Bluetooth adapter or proxy within range of the lock
+- An August ASL-05 lock (factory-reset, commissioned, or already paired)
+- The [Yale Access Bluetooth](https://www.home-assistant.io/integrations/yalexs_ble/) integration
 
-## Installation (HACS)
+## Installation & Setup
 
 1. Home Assistant → **Settings → Devices & Services → Integrations**
 2. **⋮ → Custom repositories** → add `https://github.com/websterwh/august-local-hacs`, category **Integration**
-3. Install **August Local Keypad (Door PINs)**, restart Home Assistant
-4. **Settings → Devices & Services → Add Integration** → search "August Local Keypad"
-5. Choose **Use an existing HA Bluetooth lock** (if Yale Access Bluetooth is already set up), or **Use August account connected to HA** to import the key via your existing official August integration's session
+3. Install **August Local**, restart Home Assistant
+4. **Settings → Devices & Services → Add Integration** → search "August Local"
+5. Choose setup option:
+   - **Enroll a factory-reset lock** (for new/reset ASL-05)
+   - **Use an existing Bluetooth lock** (Yale Access Bluetooth)
+   - **Use August account** (optional, import key from app)
 
 ## Using it
 
@@ -47,7 +50,10 @@ Open **Door PINs** in the HA sidebar to manage PINs through the panel: reserve a
 
 ## Documentation
 
-See [`custom_components/august_local_keypad/README.md`](custom_components/august_local_keypad/README.md) for the integration's own setup notes, and `services.yaml` for the service schema.
+- [SETUP.md](docs/SETUP.md) — Full installation & usage guide
+- [TEST_RESULTS.md](docs/TEST_RESULTS.md) — Local component testing (7/7 passing)
+- [LOCAL_TESTING.md](docs/LOCAL_TESTING.md) — Debugging guide
+- [custom_components/august_local/README.md](custom_components/august_local/README.md) — Integration details
 
 ## Credits / related projects
 
