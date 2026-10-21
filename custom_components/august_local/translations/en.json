@@ -75,7 +75,9 @@
       "rate_limited": "August is rate-limiting sign-in. Wait before trying again.",
       "bluetooth_connection_failed": "The lock could not be reached over Bluetooth. Keep the proxy near the lock and the August app closed, then retry.",
       "bluetooth_auth_failed": "The installed key was rejected by the lock. Refresh its provisioned key; this is separate from August account sign-in.",
-      "invalid_mac": "Invalid MAC address format (use XX:XX:XX:XX:XX:XX)"
+      "invalid_mac": "Invalid MAC address format (use XX:XX:XX:XX:XX:XX)",
+      "no_connectable_device": "No connectable Bluetooth device was found at this address. Enrollment requires an active HA Bluetooth proxy with a direct connection to the lock. Verify the proxy is running, placed near the lock, and the MAC address is correct. No BLE connection was attempted.",
+      "enrollment_failed": "Local enrollment did not complete. The sequence is experimental and has not been verified end-to-end. It requires an active HA Bluetooth proxy connection. Check HA logs for details."
     },
     "abort": {
       "single_instance_allowed": "Door PINs is already configured. Use Configure to reconnect its lock.",

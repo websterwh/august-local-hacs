@@ -19,9 +19,10 @@ class EnrollmentError(Exception):
 class ASL05Enrollment:
     """Enroll a factory-reset August ASL-05 lock."""
     
-    def __init__(self, lock_mac: str, slot: int = 1):
+    def __init__(self, lock_mac: str, slot: int = 1, *, device=None):
         self.lock_mac = lock_mac
         self.slot = slot
+        self.device = device
         self.client = None
         self.nonces = None
         self.session_key = None
@@ -29,6 +30,8 @@ class ASL05Enrollment:
     
     async def discover_lock(self, timeout: int = 180) -> bool:
         """Wait for lock to appear in BLE scan."""
+        if self.device is not None:
+            return True
         print(f"[*] Waiting for lock {self.lock_mac} ({timeout}s timeout)...")
         start = asyncio.get_event_loop().time()
         
@@ -37,6 +40,7 @@ class ASL05Enrollment:
                 devices = await BleakScanner.discover(timeout=5.0)
                 for d in devices:
                     if d.address.lower() == self.lock_mac.lower():
+                        self.device = d
                         print(f"[✓] Found: {d.name}")
                         return True
                 
@@ -55,13 +59,18 @@ class ASL05Enrollment:
         """Connect to lock."""
         print(f"[*] Connecting to {self.lock_mac}...")
         
-        self.client = BleakClient(self.lock_mac, timeout=10.0)
+        if self.device is None:
+            raise EnrollmentError("No connectable Bluetooth device selected")
+        self.client = BleakClient(self.device, timeout=30.0)
         try:
             await self.client.connect()
+            if not self.client.is_connected:
+                raise EnrollmentError("Bluetooth connection did not remain open")
             print(f"[✓] Connected")
             return True
         except Exception as e:
-            raise EnrollmentError(f"Failed to connect: {e}")
+            await self.disconnect()
+            raise EnrollmentError("Bluetooth connection could not be established") from e
     
     async def trigger_enrollment(self) -> bool:
         """Trigger the enrollment handshake by sending initialization command."""
@@ -100,7 +109,6 @@ class ASL05Enrollment:
         responses = {"data": []}
         
         def on_notify(sender, data):
-            print(f"[✓] Got enrollment response: {data.hex()}")
             responses["data"].append(data)
         
         try:
@@ -124,35 +132,10 @@ class ASL05Enrollment:
                         print(f"[✓] Extracted nonces")
                         return True
             
-            print(f"[!] No nonce response received")
-            # Fallback: try using advertisement data as nonces
-            return await self._try_advertisement_nonces()
+            raise EnrollmentError("No enrollment response received; no key was written")
         
         except Exception as e:
             raise EnrollmentError(f"Enrollment trigger failed: {e}")
-    
-    async def _try_advertisement_nonces(self) -> bool:
-        """Fallback: use nonces from BLE advertisement data."""
-        print(f"[*] Trying to extract nonces from advertisements...")
-        
-        devices = await BleakScanner.discover(timeout=5.0, return_adv=True)
-        for mac_addr, (ble_device, adv_data) in devices.items():
-            if mac_addr.lower() == self.lock_mac.lower():
-                if adv_data.manufacturer_data:
-                    # Extract from manufacturer data
-                    data = b''
-                    for mfg_id in sorted(adv_data.manufacturer_data.keys()):
-                        data += adv_data.manufacturer_data[mfg_id]
-                    
-                    if len(data) >= 16:
-                        # Use first 16 bytes
-                        lock_nonce = data[0:8]
-                        mobile_nonce = data[8:16]
-                        self.nonces = (lock_nonce, mobile_nonce)
-                        print(f"[✓] Using advertisement nonces")
-                        return True
-        
-        return False
     
     def derive_session_key(self) -> bytes:
         """Derive session key from captured nonces."""
@@ -162,13 +145,11 @@ class ASL05Enrollment:
         lock_nonce, mobile_nonce = self.nonces
         self.session_key = mobile_nonce + lock_nonce
         
-        print(f"[✓] Derived session key: {self.session_key.hex()}")
         return self.session_key
     
     def generate_offline_key(self) -> bytes:
         """Generate a random 16-byte offline key."""
         self.offline_key = os.urandom(16)
-        print(f"[✓] Generated offline key: {self.offline_key.hex()}")
         return self.offline_key
     
     async def write_offline_key(self) -> bool:
@@ -252,11 +233,11 @@ class ASL05Enrollment:
     
     async def disconnect(self):
         """Disconnect from lock."""
-        if self.client and self.client.is_connected:
+        if self.client is not None:
             try:
-                await self.client.disconnect()
+                await asyncio.wait_for(self.client.disconnect(), timeout=10.0)
                 print(f"[✓] Disconnected")
-            except:
+            except Exception:
                 pass
     
     async def enroll(self) -> bytes:
@@ -264,14 +245,16 @@ class ASL05Enrollment:
         try:
             await self.discover_lock()
             await self.connect()
-            await self.trigger_enrollment()
+            if not await self.trigger_enrollment():
+                raise EnrollmentError("Enrollment handshake did not complete; no key was written")
+            if not self.client.is_connected:
+                raise EnrollmentError("Bluetooth disconnected during enrollment; no key was written")
             self.derive_session_key()
             self.generate_offline_key()
             await self.write_offline_key()
             
             print(f"\n[✓✓✓ ENROLLMENT COMPLETE ✓✓✓")
             print(f"[✓] Lock is now provisioned for offline control")
-            print(f"[✓] Offline key: {self.offline_key.hex()}")
             
             return self.offline_key
         
