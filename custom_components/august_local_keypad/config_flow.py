@@ -9,6 +9,7 @@ from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from yalexs_ble import PushLock, AuthError
 from . import DOMAIN, _private_protocol_logs
 from .account import AugustAccount, ConnectedAugustAccount, AccountError
+from .enrollment import ASL05Enrollment, EnrollmentError
 
 
 class AccountSteps:
@@ -142,7 +143,26 @@ class ConfigFlow(AccountSteps,config_entries.ConfigFlow,domain=DOMAIN):
 
     async def async_step_user(self,user_input=None):
         if self._async_current_entries():return self.async_abort(reason='single_instance_allowed')
-        return self.async_show_menu(step_id='user',menu_options=['existing','ha_account','account'])
+        return self.async_show_menu(step_id='user',menu_options=['existing','enroll','ha_account','account'])
+    
+    async def async_step_enroll(self,user_input=None):
+        errors={}
+        if user_input is not None:
+            lock_mac=user_input['lock_mac'].upper().strip()
+            if not self._is_valid_mac(lock_mac):errors['base']='invalid_mac'
+            else:
+                try:
+                    enrollment=ASL05Enrollment(lock_mac)
+                    key=await enrollment.enroll()
+                    data={'address':lock_mac,'key':key.hex()}
+                    return await self._finish_account_lock(data)
+                except EnrollmentError as exc:errors['base']=str(exc)
+        return self.async_show_form(step_id='enroll',errors=errors,data_schema=vol.Schema({vol.Required('lock_mac'):str}))
+    
+    @staticmethod
+    def _is_valid_mac(mac:str)->bool:
+        parts=mac.split(':')
+        return len(parts)==6 and all(len(p)==2 and all(c in '0123456789ABCDEF' for c in p) for p in parts)
 
     async def async_step_existing(self,user_input=None):
         entries=self.hass.config_entries.async_entries('yalexs_ble')

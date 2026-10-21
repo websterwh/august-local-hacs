@@ -48,6 +48,16 @@
         "data": {
           "cloud_entry_id": "August account"
         }
+      },
+      "enroll": {
+        "title": "Enroll Factory-Reset Lock",
+        "description": "Set up a factory-reset August ASL-05 lock for cloud-free operation.\n\nMake sure:\n1. Lock is factory-reset (button held for 30+ seconds until flashing stops)\n2. Lock Bluetooth is on and broadcasting\n3. Lock is within Bluetooth range\n\nThe integration will capture enrollment nonces, derive a session key, and write an offline key to the lock.",
+        "data": {
+          "lock_mac": "Lock MAC Address (XX:XX:XX:XX:XX:XX)"
+        },
+        "data_description": {
+          "lock_mac": "The Bluetooth MAC address of your August lock (e.g., 78:9C:85:33:F8:34)"
+        }
       }
     },
     "error": {
@@ -163,5 +173,8 @@
       "rate_limited": "August is rate-limiting sign-in. Wait before trying again.",
       "no_loaded_august_account": "Connect and finish signing in to the official August integration first, then return here. Open Settings \u2192 Devices & services \u2192 Add integration \u2192 August."
     }
+  },
+  "error": {
+    "invalid_mac": "Invalid MAC address format (use XX:XX:XX:XX:XX:XX)"
   }
 }
