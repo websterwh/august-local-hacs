@@ -157,7 +157,7 @@ class ConfigFlow(AccountSteps,config_entries.ConfigFlow,domain=DOMAIN):
                     data={'address':lock_mac,'key':key.hex()}
                     return await self._finish_account_lock(data)
                 except EnrollmentError as exc:errors['base']=str(exc)
-        return self.async_show_form(step_id='enroll',errors=errors,data_schema=vol.Schema({vol.Required('lock_mac'):selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT))})
+        return self.async_show_form(step_id='enroll',errors=errors,data_schema=vol.Schema({vol.Required('lock_mac'):selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT))}))
     
     @staticmethod
     def _is_valid_mac(mac:str)->bool:
