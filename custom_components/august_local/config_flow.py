@@ -10,7 +10,8 @@ from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from yalexs_ble import PushLock, AuthError
 from . import DOMAIN, _private_protocol_logs
 from .account import AugustAccount, ConnectedAugustAccount, AccountError
-from .enrollment import ASL05Enrollment, EnrollmentError
+# Factory-reset enrollment removed: requires key from August servers
+# from .enrollment import ASL05Enrollment, EnrollmentError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -146,27 +147,14 @@ class ConfigFlow(AccountSteps,config_entries.ConfigFlow,domain=DOMAIN):
 
     async def async_step_user(self,user_input=None):
         if self._async_current_entries():return self.async_abort(reason='single_instance_allowed')
-        return self.async_show_menu(step_id='user',menu_options={'enroll':'Set up lock locally (experimental)','existing':'Use an existing HA Bluetooth lock','ha_account':'Use August account connected to HA','account':'Legacy August sign-in (optional)'})
+        return self.async_show_menu(step_id='user',menu_options={'existing':'Use an existing HA Bluetooth lock','ha_account':'Use August account connected to HA','account':'Legacy August sign-in (optional)'})
+    
+    # Factory-reset enrollment removed: requires key from August servers (not possible offline)
     
     async def async_step_enroll(self,user_input=None):
-        errors={};stage='unknown'
-        if user_input is not None:
-            lock_mac=user_input['lock_mac'].upper().strip()
-            if not self._is_valid_mac(lock_mac):errors['base']='invalid_mac'
-            else:
-                device=bluetooth.async_ble_device_from_address(self.hass,lock_mac,connectable=True)
-                if device is None:errors['base']='no_connectable_device'
-                else:
-                    try:
-                        enrollment=ASL05Enrollment(lock_mac,device=device)
-                        key=await enrollment.enroll()
-                        data={'address':lock_mac,'key':key.hex()}
-                        return await self._finish_account_lock(data)
-                    except EnrollmentError as exc:
-                        stage=getattr(exc,'stage','unknown')
-                        _LOGGER.warning('august_local enrollment failed: stage=%s type=%s',stage,type(exc).__name__)
-                        errors['base']='enrollment_failed'
-        return self.async_show_form(step_id='enroll',errors=errors,data_schema=vol.Schema({vol.Required('lock_mac'):selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT))}),description_placeholders={'stage':stage})
+        # Factory-reset locks require initial key provisioning via August account.
+        # Offline enrollment is not supported. See docs/BOOTSTRAP_ENROLLMENT.md.
+        return self.async_abort(reason='factory_reset_not_supported')
     
     @staticmethod
     def _is_valid_mac(mac:str)->bool:
@@ -190,7 +178,7 @@ class ConfigFlow(AccountSteps,config_entries.ConfigFlow,domain=DOMAIN):
 
 class OptionsFlow(AccountSteps,config_entries.OptionsFlow):
     async def async_step_init(self,user_input=None):
-        return self.async_show_menu(step_id='init',menu_options={'manage':'Open PIN management','ha_account':'Use August account connected to HA','account':'Legacy August sign-in (optional)'})
+        return self.async_show_menu(step_id='init',menu_options={'manage':'Open PIN management','ha_account':'Use August account connected to HA'})
 
     async def async_step_manage(self,user_input=None):
         if user_input is not None:return self.async_create_entry(title='',data=dict(self.config_entry.options))
