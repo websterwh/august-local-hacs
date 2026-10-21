@@ -1,0 +1,58 @@
+status:
+  name: Check local keypad connection
+  description: Authenticate and read status using the existing Yale Bluetooth connection. Does not enumerate PINs or operate the door.
+program:
+  name: Program owned keypad slot
+  description: Clear an owned slot using its current PIN, then set and commit an always-valid PIN. Failure after clear can leave the slot empty. PIN references name values in the private configuration file.
+  fields:
+    slot:
+      name: Owned slot
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    pin_reference:
+      name: New PIN reference
+      required: true
+      selector:
+        text:
+    previous_pin_reference:
+      name: Current PIN reference
+      description: Defaults to the new reference. For a known cleared owned slot, use the new reference.
+      selector:
+        text:
+delete:
+  name: Delete owned keypad PIN
+  description: Clear only a configured owned slot using the current PIN from its private reference.
+  fields:
+    slot:
+      name: Owned slot
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    pin_reference:
+      name: Current PIN reference
+      required: true
+      selector:
+        text:
+
+insert:
+  name: Insert PIN in reserved local slot
+  description: Program an explicitly reserved unused slot without clearing it. This cannot detect occupancy; occupied slots may accept another code. Prefer the Door PINs manager UI.
+  fields:
+    slot:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    pin_reference:
+      required: true
+      selector:
+        text:

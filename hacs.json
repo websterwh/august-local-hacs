@@ -1,0 +1,11 @@
+{
+  "name": "August Local Keypad (Door PINs)",
+  "codeowners": ["@websterwh"],
+  "content_in_root": false,
+  "domains": ["lock", "binary_sensor"],
+  "documentation": "https://github.com/websterwh/august-local-hacs",
+  "issues": "https://github.com/websterwh/august-local-hacs/issues",
+  "render_readme": true,
+  "iot_class": "local_polling",
+  "homeassistant": "2024.1.0"
+}
