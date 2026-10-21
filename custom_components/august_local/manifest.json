@@ -1,6 +1,6 @@
 {
-  "domain": "august_local_keypad",
-  "name": "August Local Keypad (Door PINs)",
+  "domain": "august_local",
+  "name": "August Local",
   "version": "0.10.3",
   "dependencies": [
     "yalexs_ble",
@@ -13,8 +13,7 @@
   "iot_class": "local_polling",
   "documentation": "https://github.com/websterwh/august-local-hacs",
   "issue_tracker": "https://github.com/websterwh/august-local-hacs/issues",
+  "requirements": [],
   "config_flow": true,
-  "requirements": [
-    "yalexs==9.2.13"
-  ]
+
 }

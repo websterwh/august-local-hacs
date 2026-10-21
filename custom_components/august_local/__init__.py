@@ -12,7 +12,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.util.yaml import load_yaml
 from .protocol import ASL05Keypad, KeypadFailure
 
-DOMAIN = 'august_local_keypad'
+DOMAIN = 'august_local'
 CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({
     vol.Required('entry_id'): cv.string,
     vol.Required('owned_slots'): [vol.All(vol.Coerce(int), vol.Range(min=1, max=255))],
