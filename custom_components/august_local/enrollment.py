@@ -1,7 +1,11 @@
-"""Factory-reset August ASL-05 enrollment and key provisioning.
+"""August ASL-05 enrollment requires a pre-installed handshakeKey.
 
-Captures enrollment nonces, derives session key, and writes offline key
-to the lock for permanent cloud-free control.
+Factory-reset locks have no key and require online authentication via August servers.
+Once authenticated and key-provisioned, this module can manage offline operations.
+
+Protocol: opcode 0x01 (SendMobileKey) + 0x03 (InitializationCommand).
+Frame: 18 bytes [opcode:1][payload:11][checksum:4][trailer:1][slot:1].
+Checksum: -(sum of three LE uint32s in bytes[0:12]) & 0xFFFFFFFF.
 """
 
 import asyncio
