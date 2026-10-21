@@ -17,15 +17,31 @@ spec.loader.exec_module(enrollment)
 
 
 class ConnectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_notification_failure_reports_stage_without_secret(self):
+        characteristic = types.SimpleNamespace(properties=["write", "indicate"], uuid="0000001e-0000-1000-8000-0026bb765291")
+        client = types.SimpleNamespace(
+            is_connected=True,
+            services=[types.SimpleNamespace(characteristics=[characteristic])],
+            start_notify=AsyncMock(side_effect=RuntimeError("private payload")),
+            write_gatt_char=AsyncMock(),
+        )
+        setup = enrollment.ASL05Enrollment("AA:BB:CC:DD:EE:FF", device=object())
+        setup.client = client
+        with self.assertRaises(enrollment.EnrollmentError) as caught:
+            await setup.trigger_enrollment()
+        self.assertEqual(caught.exception.stage, "notification_subscription")
+        self.assertNotIn("private payload", str(caught.exception))
+        client.write_gatt_char.assert_not_awaited()
+
     async def test_proxy_device_is_preserved_without_rescanning(self):
         device = object()
         client = types.SimpleNamespace(connect=AsyncMock(), disconnect=AsyncMock(), is_connected=True)
         setup = enrollment.ASL05Enrollment("AA:BB:CC:DD:EE:FF", device=device)
         with patch.object(enrollment.BleakScanner, "discover", new_callable=AsyncMock) as scan:
-            with patch.object(enrollment, "BleakClient", return_value=client) as factory:
+            with patch.object(enrollment, "establish_connection", new_callable=AsyncMock, return_value=client) as factory:
                 self.assertTrue(await setup.discover_lock())
                 self.assertTrue(await setup.connect())
-                factory.assert_called_once_with(device, timeout=30.0)
+                factory.assert_awaited_once_with(enrollment.BleakClientWithServiceCache, device, "AA:BB:CC:DD:EE:FF", max_attempts=3, timeout=30.0)
                 scan.assert_not_awaited()
                 await setup.disconnect()
         client.disconnect.assert_awaited_once()
@@ -33,7 +49,8 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_connection_failure_cleans_up(self):
         client = types.SimpleNamespace(connect=AsyncMock(side_effect=TimeoutError()), disconnect=AsyncMock(), is_connected=False)
         setup = enrollment.ASL05Enrollment("AA:BB:CC:DD:EE:FF", device=object())
-        with patch.object(enrollment, "BleakClient", return_value=client):
+        setup.client = client
+        with patch.object(enrollment, "establish_connection", new_callable=AsyncMock, side_effect=TimeoutError()):
             with self.assertRaisesRegex(enrollment.EnrollmentError, "could not be established"):
                 await setup.connect()
         client.disconnect.assert_awaited_once()
@@ -74,6 +91,7 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         lookup = Mock(return_value=device)
         factory = Mock()
         namespace = {
+            "_LOGGER": Mock(),
             "bluetooth": types.SimpleNamespace(async_ble_device_from_address=lookup),
             "ASL05Enrollment": factory,
             "EnrollmentError": enrollment.EnrollmentError,

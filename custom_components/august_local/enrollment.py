@@ -10,10 +10,15 @@ import struct
 from typing import Optional, Tuple
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from bleak import BleakClient, BleakScanner
+from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 
 
 class EnrollmentError(Exception):
     """Enrollment failed."""
+
+    def __init__(self, message, *, stage="unknown"):
+        super().__init__(message)
+        self.stage = stage
 
 
 class ASL05Enrollment:
@@ -61,16 +66,21 @@ class ASL05Enrollment:
         
         if self.device is None:
             raise EnrollmentError("No connectable Bluetooth device selected")
-        self.client = BleakClient(self.device, timeout=30.0)
         try:
-            await self.client.connect()
+            self.client = await establish_connection(
+                BleakClientWithServiceCache,
+                self.device,
+                self.lock_mac,
+                max_attempts=3,
+                timeout=30.0,
+            )
             if not self.client.is_connected:
                 raise EnrollmentError("Bluetooth connection did not remain open")
             print(f"[✓] Connected")
             return True
         except Exception as e:
             await self.disconnect()
-            raise EnrollmentError("Bluetooth connection could not be established") from e
+            raise EnrollmentError("Bluetooth connection could not be established", stage="connection") from e
     
     async def trigger_enrollment(self) -> bool:
         """Trigger the enrollment handshake by sending initialization command."""
@@ -111,16 +121,19 @@ class ASL05Enrollment:
         def on_notify(sender, data):
             responses["data"].append(data)
         
+        stage = "notification_subscription"
         try:
             await self.client.start_notify(sec_char, on_notify)
             print(f"[*] Subscribed to notifications")
             
             # Send the command
+            stage = "handshake_write"
             await self.client.write_gatt_char(sec_char, cmd, response=False)
             print(f"[✓] Sent initialization command")
             
             # Wait for lock's nonce response
             print(f"[*] Waiting for lock to respond with nonces (10s)...")
+            stage = "handshake_response"
             await asyncio.sleep(10)
             
             if responses["data"]:
@@ -135,7 +148,7 @@ class ASL05Enrollment:
             raise EnrollmentError("No enrollment response received; no key was written")
         
         except Exception as e:
-            raise EnrollmentError(f"Enrollment trigger failed: {e}")
+            raise EnrollmentError("Enrollment handshake did not complete", stage=stage) from e
     
     def derive_session_key(self) -> bytes:
         """Derive session key from captured nonces."""

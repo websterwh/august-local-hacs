@@ -77,7 +77,7 @@
       "bluetooth_auth_failed": "The installed key was rejected by the lock. Refresh its provisioned key; this is separate from August account sign-in.",
       "invalid_mac": "Invalid MAC address format (use XX:XX:XX:XX:XX:XX)",
       "no_connectable_device": "No connectable Bluetooth device was found at this address. Enrollment requires an active HA Bluetooth proxy with a direct connection to the lock. Verify the proxy is running, placed near the lock, and the MAC address is correct. No BLE connection was attempted.",
-      "enrollment_failed": "Local enrollment did not complete. The sequence is experimental and has not been verified end-to-end. It requires an active HA Bluetooth proxy connection. Check HA logs for details."
+      "enrollment_failed": "Local enrollment failed at stage '{stage}'. No key was confirmed as enrolled. The sequence is experimental and has not been verified end-to-end. Check HA logs for the error type; secrets are withheld."
     },
     "abort": {
       "single_instance_allowed": "Door PINs is already configured. Use Configure to reconnect its lock.",

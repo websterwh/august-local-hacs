@@ -1,5 +1,6 @@
 """UI setup, including one-time import of an installed August owner key."""
 import asyncio
+import logging
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components import bluetooth
@@ -10,6 +11,8 @@ from yalexs_ble import PushLock, AuthError
 from . import DOMAIN, _private_protocol_logs
 from .account import AugustAccount, ConnectedAugustAccount, AccountError
 from .enrollment import ASL05Enrollment, EnrollmentError
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class AccountSteps:
@@ -146,7 +149,7 @@ class ConfigFlow(AccountSteps,config_entries.ConfigFlow,domain=DOMAIN):
         return self.async_show_menu(step_id='user',menu_options={'enroll':'Set up lock locally (experimental)','existing':'Use an existing HA Bluetooth lock','ha_account':'Use August account connected to HA','account':'Legacy August sign-in (optional)'})
     
     async def async_step_enroll(self,user_input=None):
-        errors={}
+        errors={};stage='unknown'
         if user_input is not None:
             lock_mac=user_input['lock_mac'].upper().strip()
             if not self._is_valid_mac(lock_mac):errors['base']='invalid_mac'
@@ -159,8 +162,11 @@ class ConfigFlow(AccountSteps,config_entries.ConfigFlow,domain=DOMAIN):
                         key=await enrollment.enroll()
                         data={'address':lock_mac,'key':key.hex()}
                         return await self._finish_account_lock(data)
-                    except EnrollmentError:errors['base']='enrollment_failed'
-        return self.async_show_form(step_id='enroll',errors=errors,data_schema=vol.Schema({vol.Required('lock_mac'):selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT))}))
+                    except EnrollmentError as exc:
+                        stage=getattr(exc,'stage','unknown')
+                        _LOGGER.warning('august_local enrollment failed: stage=%s type=%s',stage,type(exc).__name__)
+                        errors['base']='enrollment_failed'
+        return self.async_show_form(step_id='enroll',errors=errors,data_schema=vol.Schema({vol.Required('lock_mac'):selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT))}),description_placeholders={'stage':stage})
     
     @staticmethod
     def _is_valid_mac(mac:str)->bool:
