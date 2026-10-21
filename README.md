@@ -2,7 +2,7 @@
 
 A Home Assistant custom integration that adds local PIN/keypad management, lock-native auto-lock control, and HA-side proximity-based arrival automation on top of the existing **Yale Access Bluetooth** (`yalexs_ble`) integration.
 
-**This does not replace the August app, does not perform factory enrollment, and does not pair a keypad from scratch.** It manages PINs on a lock that is **already commissioned** (has an installed Bluetooth offline key) via Yale Access Bluetooth, and whose physical keypad is **already paired**.
+**This integr integrates locks that have been provisioned with a Bluetooth offline key via August's servers.** Factory-reset locks require a one-time August account setup (detailed below). After provisioning, the lock operates 100% offline with HA—no August cloud required. Keypad pairing is managed separately via the August app and is a prerequisite.
 
 ## What this actually does
 
@@ -15,10 +15,10 @@ A Home Assistant custom integration that adds local PIN/keypad management, lock-
 
 ## What this does **not** do
 
-- **Factory-reset enrollment supported!** A factory-reset ASL-05 can be enrolled entirely through this integration (no August app needed).
+- **HA-only factory enrollment.** Factory-reset locks require a one-time August account to receive the encryption key. See [BOOTSTRAP_ENROLLMENT.md](docs/BOOTSTRAP_ENROLLMENT.md).
 - **No keypad pairing.** The physical August Smart Keypad must already be paired to the lock through the official app before this integration can program PINs on it. HA-only keypad pairing is unimplemented and unverified.
 - **No PIN readback from the lock.** PIN contents cannot be reliably enumerated from tested ASL-05 firmware (1.1.30). The integration retains PINs it wrote, in its own local storage — it never assumes an unreserved slot is empty, and it never guesses a PIN.
-- **Zero cloud contact.** Factory-reset enrollment is entirely local (BLE only). August cloud account is never needed.
+- **Zero cloud contact after setup.** Once keyed via August account (one-time), all future operations are local Bluetooth. August servers are never contacted again.
 
 ## Requirements
 
