@@ -28,9 +28,60 @@ class AugustPinManager extends HTMLElement {
   async api(action,data={}) { return await this._hass.callApi(action?'POST':'GET','august_local_keypad/manage',action?{action,...data}:undefined); }
   element(tag,text,attrs={}) { const n=document.createElement(tag);if(text!==null)n.textContent=text;Object.assign(n,attrs);return n; }
   button(text,fn,host) { const b=this.element('button',text);b.onclick=fn;host.append(b);return b; }
-  async refresh(){try{this.model=await this.api();this.render();}catch(e){this.shadowRoot.textContent='PIN manager unavailable. Check the integration.';}}
-  message(text){this.shadowRoot.querySelector('#message').textContent=text;}
-  async run(action,data,success){this.message('Working…');this.shadowRoot.querySelectorAll('button').forEach(b=>b.disabled=true);try{const r=await this.api(action,data);if(r.error)throw r;await this.refresh();this.message(['create','program'].includes(action)?'Programming acknowledged. Keypad acceptance is unverified; check pairing and physically test only when unlocking is safe.':success || 'Completed.');return r;}catch(e){await this.refresh();this.message(e.body?.error || e.message || e.error || 'Operation failed. Check Bluetooth before retrying.');}}
+  async refresh(){
+    try{
+      const model=await this.api();if(model.error)throw model;
+      this.model=model;this.render();
+      if(this.busy)this.setBusy(true,this.busyLabel);
+      return true;
+    }catch(e){this.message('Could not refresh PIN status. Check the connection before submitting another operation.');return false;}
+  }
+  message(text){
+    let status=this.shadowRoot.querySelector('#message');
+    if(!status){status=this.element('div','',{id:'message'});status.setAttribute('role','status');status.setAttribute('aria-live','polite');this.shadowRoot.append(status);}
+    status.textContent=text;
+  }
+  setBusy(active,label='Working…'){
+    this.busy=active;this.busyLabel=label;
+    this.shadowRoot.host.setAttribute('aria-busy',String(active));
+    if(active){
+      this.disabledControls??=new Map();
+      for(const control of this.shadowRoot.querySelectorAll('button,input,select')){
+        if(!this.disabledControls.has(control))this.disabledControls.set(control,control.disabled);
+        control.disabled=true;
+      }
+      if(!this.shadowRoot.querySelector('#operation-progress')){
+        const style=this.element('style',`#operation-progress{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:1000;display:flex;gap:12px;align-items:center;max-width:85vw;padding:16px;border-radius:10px;background:var(--card-background-color,#fff);color:var(--primary-text-color,#222);box-shadow:0 2px 12px #0005}.operation-spinner{width:22px;height:22px;flex-shrink:0;border:3px solid var(--divider-color,#ccc);border-top-color:var(--primary-color,#03a9f4);border-radius:50%;animation:pin-progress 1s linear infinite}@keyframes pin-progress{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.operation-spinner{animation:none}}`,{id:'operation-progress-style'});
+        const progress=this.element('div','',{id:'operation-progress'});progress.setAttribute('role','status');progress.setAttribute('aria-live','polite');
+        const spinner=this.element('span','',{className:'operation-spinner'});spinner.setAttribute('aria-hidden','true');
+        progress.append(spinner,this.element('span',label,{id:'operation-progress-label'}));
+        this.shadowRoot.append(style,progress);
+      }else this.shadowRoot.querySelector('#operation-progress-label').textContent=label;
+    }else{
+      for(const [control,disabled] of this.disabledControls||[])control.disabled=disabled;
+      this.disabledControls=null;
+      this.shadowRoot.querySelector('#operation-progress')?.remove();
+      this.shadowRoot.querySelector('#operation-progress-style')?.remove();
+    }
+  }
+  async run(action,data,success){
+    if(this.busy)return;
+    const label=['create','program','delete','provision'].includes(action)?'Waiting for Bluetooth… This can take over a minute. Do not submit again.':'Working…';
+    this.setBusy(true,label);this.message(label);
+    try{
+      let result,failure;
+      try{result=await this.api(action,data);if(result.error)throw result;}
+      catch(error){failure=error;}
+      const refreshed=await this.refresh();
+      if(failure){
+        this.message((failure.body?.error||failure.message||failure.error||'Operation outcome could not be confirmed. Do not retry blindly.')+(refreshed?'':' Status refresh also failed; the displayed record may be stale.'));
+        return;
+      }
+      if(!refreshed){this.message('Request completed, but PIN status could not be refreshed. Do not repeat the write; refresh status after checking the connection.');return;}
+      this.message(['create','program'].includes(action)?'Programming acknowledged. Keypad acceptance is unverified; check pairing and physically test only when unlocking is safe.':success||'Completed.');
+      return result;
+    }finally{this.setBusy(false);}
+  }
   render(){
     const root=this.shadowRoot;root.innerHTML=`<style>:host{display:block;padding:28px;color:var(--primary-text-color);background:var(--primary-background-color);min-height:100vh;box-sizing:border-box;font:15px system-ui}header{display:flex;align-items:center;height:56px;margin:-28px -28px 20px;padding:0 12px;background:var(--app-header-background-color);color:var(--app-header-text-color)}h1{font-size:20px;margin:0 0 0 12px}.note{color:var(--secondary-text-color);line-height:1.5;max-width:900px}.card{background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:12px;padding:20px;margin-top:22px;overflow:auto}table{border-collapse:collapse;width:100%;min-width:700px}th,td{text-align:left;padding:12px 10px;border-bottom:1px solid var(--divider-color)}button{border:0;border-radius:7px;padding:10px 14px;margin:4px;background:var(--primary-color);color:var(--text-primary-color);cursor:pointer}button:disabled{opacity:.5}input,select{font:inherit;padding:10px;border:1px solid var(--divider-color);border-radius:6px;background:var(--card-background-color);color:var(--primary-text-color);margin:6px}label{display:block;margin:10px 0}#message{white-space:pre-wrap;margin:15px 0}form{max-width:620px}.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}h2{font-size:18px;margin:0}h3{font-size:16px;margin:0 0 12px}.section-head button{margin:0 0 0 8px}.subtle{color:var(--secondary-text-color);line-height:1.5}.secondary{background:var(--secondary-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color)}details{margin-top:18px}summary{cursor:pointer;color:var(--secondary-text-color)}.card form.card{margin:16px 0;padding:16px}.layout{max-width:1100px;margin:auto}.settings-card{margin-bottom:24px}.actions{white-space:nowrap}.mask{font-family:monospace}.pin-box{background:#3b3b3b;color:#fff;font-family:monospace;min-width:94px;letter-spacing:2px}a{color:var(--primary-color)}@media(max-width:700px){:host{padding:16px}header{margin:-16px -16px 20px}table{min-width:0}thead{display:none}tbody tr{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--divider-color);padding:8px 0}td{display:block;border:0;overflow-wrap:anywhere}td::before{content:attr(data-label);display:block;font-size:12px;color:var(--secondary-text-color);margin-bottom:5px}td:last-child{grid-column:1/-1;white-space:normal}}</style><header><ha-menu-button></ha-menu-button><h1>Door PINs</h1></header><main class="layout"><div id="message" role="status" aria-live="polite"></div><section class="card"><div class="section-head"><h2>PIN management</h2><div id="toolbar"></div></div><div id="editor"></div><table><thead></thead><tbody></tbody></table><p id="empty"></p><details id="advanced"><summary>Advanced PIN setup</summary><div id="advanced-tools"></div></details></section><section class="card settings-card" id="settings"><div class="section-head"><h2>Lock settings</h2></div><p class="subtle">Auto-lock timing saved directly on your lock.</p><div id="settings-tools"></div><div id="settings-editor"></div></section></main>`;
     const tools=root.querySelector('#toolbar');this.button('Refresh',()=>this.refresh(),tools).className='secondary';this.button('Add PIN',()=>this.edit(null),tools);
@@ -41,6 +92,7 @@ class AugustPinManager extends HTMLElement {
     if(this.model.admin)this.button('Import existing August codes',()=>this.run('import',{},'Import completed. Existing local PINs were preserved.'),root.querySelector('#advanced-tools')).className='secondary';
     const tr=document.createElement('tr');for(const h of ['Slot','Name','HA account','PIN','Status','Actions'])tr.append(this.element('th',h));root.querySelector('thead').append(tr);
     const records=this.model.records.filter(r=>r.has_pin || !['reserved','cleared'].includes(r.status));
+    if(records.some(record=>record.status==='needs_attention'||record.status==='pending'))root.querySelector('#editor').before(this.element('p','Needs recovery means a previous PIN operation was not confirmed. It does not prove the PIN is absent or invalid. Retained values are kept for recovery; do not repeatedly delete and re-add the code.',{className:'note'}));
     for(const record of records){const row=document.createElement('tr');row.append(this.element('td',String(record.slot)),this.element('td',record.name||''));const owner=this.model.users.find(u=>u.id===record.owner_id);row.append(this.element('td',owner?.name || (record.owner_id?'Assigned account':'Admin only')));const pinCell=this.element('td',record.has_pin?'••••••':'None',{className:'mask'});if(record.has_pin){const box=this.button('••••••',async()=>{if(box.dataset.shown){box.textContent='••••••';delete box.dataset.shown;return;}try{const r=await this.api('reveal',{slot:record.slot});box.textContent=r.pin;box.dataset.shown='1';setTimeout(()=>{box.textContent='••••••';delete box.dataset.shown;},10000);}catch(e){this.message('PIN unavailable.');}},pinCell);box.className='pin-box';box.setAttribute('aria-label','Show or hide PIN');pinCell.firstChild.remove();}row.append(pinCell);row.append(this.element('td',({active:'Active',imported:'Active',needs_attention:'Needs recovery',programming:'Saving',deleting:'Deleting'})[record.status]||record.status));const actions=this.element('td','',{className:'actions'});this.button(record.has_pin?'Change PIN':'Set PIN',()=>this.edit(record),actions);if(record.has_pin){this.button('Delete',()=>{if(confirm(`Delete the keypad PIN in slot ${record.slot}? The door will not be operated.`))this.run('delete',{slot:record.slot},`Slot ${record.slot} deleted. Confirm that the keypad rejects the old PIN.`);},actions);}if(this.model.admin)this.button('Assign / rename',()=>this.assign(record),actions);row.append(actions);Array.from(row.children).forEach((cell,i)=>cell.setAttribute('data-label',['Slot','Name','HA account','PIN','Status','Actions'][i]));root.querySelector('tbody').append(row);}
     root.querySelector('#empty').textContent=records.length?'':'No PINs yet. An administrator must discover PIN capacity first, then use Add PIN.';
 
@@ -73,4 +125,4 @@ class AugustPinManager extends HTMLElement {
   }
   assign(record){const host=this.shadowRoot.querySelector('#editor');host.replaceChildren();const form=this.element('form','',{className:'card'});form.append(this.element('h2',`Assign / rename · slot ${record.slot}`));const name=this.element('input',null,{value:record.name||'',maxLength:80});name.setAttribute('aria-label','PIN label');const select=this.element('select',null);select.setAttribute('aria-label','HA account');select.append(this.element('option','Admin only',{value:''}));for(const user of this.model.users)select.append(this.element('option',user.name,{value:user.id}));select.value=record.owner_id||'';for(const [label,input]of[['PIN label',name],['HA account',select]]){const l=this.element('label',label);l.append(input);form.append(l);}form.append(this.element('p','Assignment grants that account access to reveal, change, and delete this slot’s code. Other slots stay private.'));form.append(this.element('button','Save assignment',{type:'submit'}));form.onsubmit=e=>{e.preventDefault();const target=select.options[select.selectedIndex].textContent;if(confirm(`Grant ${target} management of slot ${record.slot}?`))this.run('assign',{slot:record.slot,name:name.value,owner_id:select.value},'Assignment saved.');};this.button('Cancel',()=>host.replaceChildren(),form).type='button';host.append(form);form.scrollIntoView({behavior:'smooth',block:'nearest'});}
 }
-customElements.define('august-pin-manager-v21',AugustPinManager);
+customElements.define('august-pin-manager-v22',AugustPinManager);

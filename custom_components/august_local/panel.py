@@ -10,7 +10,7 @@ from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers import entity_registry as er
 from homeassistant.exceptions import HomeAssistantError
-from .manager import PinManager, ManagerError, InsertRejected
+from .manager import PinManager, ManagerError, InsertRejected, InsertNotStarted
 from . import DOMAIN, _private_protocol_logs
 
 
@@ -48,6 +48,11 @@ async def setup_panel(hass, entry):
         try:
             await hass.services.async_call(DOMAIN, operation, data, blocking=True)
         except Exception as exc:
+            if operation == "insert" and str(exc) in (
+                "Slot occupancy could not be confirmed; no PIN insertion sent",
+                "Slot is occupied; no PIN insertion sent",
+            ):
+                raise InsertNotStarted() from None
             # A received nonzero result is a definite rejection, unlike a
             # timeout. Never clear a duplicate PIN after a rejected insertion.
             if operation == "insert" and re.fullmatch(
@@ -109,10 +114,10 @@ async def setup_panel(hass, entry):
         await panel_custom.async_register_panel(
             hass,
             frontend_url_path="august-local-keypad",
-            webcomponent_name="august-pin-manager-v21",
+            webcomponent_name="august-pin-manager-v22",
             sidebar_title="Door PINs",
             sidebar_icon="mdi:dialpad",
-            module_url="/august-local-keypad/panel.js?v=21",
+            module_url="/august-local-keypad/panel.js?v=22",
         )
         hass.data[DOMAIN]["panel_registered"] = True
 

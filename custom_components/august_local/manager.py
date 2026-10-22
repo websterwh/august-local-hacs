@@ -13,6 +13,10 @@ class InsertRejected(ManagerError):
     """Lock definitively rejected insertion; no new credential committed."""
 
 
+class InsertNotStarted(ManagerError):
+    """An insertion was blocked before any PIN-changing command was sent."""
+
+
 class PinManager:
     def __init__(self, state, save, operate, *, discover=None):
         self.state = state
@@ -295,6 +299,15 @@ class PinManager:
                 await self.operate(
                     "insert" if insert else operation, slot, pin, current or pin
                 )
+        except InsertNotStarted:
+            if not insert:
+                raise
+            r.pop("pending_pin", None)
+            r.update(status="reserved", source="local_discovered")
+            await self.save(copy.deepcopy(self.state))
+            raise ManagerError(
+                "Insertion blocked before any new PIN was sent: slot occupancy was not confirmed empty. Provision capacity again; do not retry deletion to fix this."
+            ) from None
         except InsertRejected:
             if not insert:
                 raise
@@ -311,7 +324,7 @@ class PinManager:
             # Exception from the adapter is already secret-free, but do not
             # forward arbitrary exception text from unknown libraries.
             raise ManagerError(
-                "Bluetooth operation failed; values retained. Check the local connection and retry deletion."
+                "PIN outcome is unconfirmed; values retained for recovery. Do not re-add or delete blindly. Check the connection and the recorded slot state first."
             ) from None
         if operation == "program":
             r.update(

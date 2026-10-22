@@ -42,6 +42,14 @@ Live read-only storage inspection found one HA-created record marked active and 
 
 Weekly/day/time native scheduling was not established. The panel reports that limitation, rejects schedule payloads instead of silently programming unrestricted access, and blocks replacing restricted imported codes locally. A working auto-lock operation does not establish keypad pairing, PIN validity or schedule enforcement.
 
+### 0.10.9 operation feedback and preflight classification
+
+Passed: 18 manager/adapter tests, 8 occupancy tests and 32 setup tests (**58 Python tests**), the Node frontend checks, JavaScript syntax checking and focused fatal-error/undefined-name Ruff checks. These are synthetic regression checks, not a live keypad or visual browser acceptance test.
+
+The manager/adapter tests distinguish the two fixed "no PIN insertion sent" preflight failures from genuinely uncertain writes. Only a proven preflight block discards the new unsent candidate; existing uncertain records are preserved. The Node tests cover a visible busy indicator, duplicate-submit suppression, restoration of normally disabled/enabled controls, and cleanup after request, refresh and rendering failures. A successful write followed by a failed status refresh is not retried or reported as a failed write.
+
+Read-only HA storage inspection found a needs-attention record with a pending candidate but no confirmed PIN. Its underlying failure stage cannot be reconstructed from that record alone; no candidate was discarded or lock operation sent. Hardware PIN acceptance and recovery remain unverified.
+
 Do not run the hardware component suite as a default regression gate: it contains experimental Bluetooth writes. See [LOCAL_TESTING.md](LOCAL_TESTING.md).
 
 Factory-reset survival of existing BLE keys and cloud-token validity are separate, untested questions. Reset, ownership removal, revocation and account deletion are not interchangeable tests. The future explicitly approved experiment is documented in [BOOTSTRAP_ENROLLMENT.md](BOOTSTRAP_ENROLLMENT.md).

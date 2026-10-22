@@ -145,6 +145,10 @@ The selected lock has no installed offline key available to this account. The lo
 
 ### PIN operations fail ("outcome unknown")
 
+- During a request, the panel shows a spinner, marks itself busy and disables PIN controls. Bluetooth can take over a minute. Do not submit the operation again or treat a slow response as proof of failure
+- In 0.10.9, a known occupancy preflight block reports that no new PIN was sent rather than labelling it as an uncertain write. Occupancy must still be verified before another insertion
+- **Needs recovery** means the operation's outcome is unconfirmed, not that the PIN is definitely invalid. Previously uncertain records and retained PIN values are not automatically cleared by an update
+- If a write completes but refreshing the panel fails, the panel distinguishes the refresh failure and never automatically repeats the write
 - A timeout does not prove whether a write was applied; do not retry blindly
 - Inspect the recorded failure stage and the manager's needs-attention state before any separately authorized recovery
 - Check HA logs for the failure stage name and exception type

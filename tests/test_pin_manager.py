@@ -1,11 +1,13 @@
 """Pure manager policy tests; no lock writes or HA runtime."""
 
 import copy
+import ast
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock
+import re
+from unittest.mock import AsyncMock, Mock
 
 spec = importlib.util.spec_from_file_location(
     "pin_manager_test",
@@ -149,6 +151,35 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
             await m.mutate(person("admin", True), 2, "program", "5678")
         self.assertEqual(operate.await_count, 1)
 
+    async def test_preflight_block_does_not_claim_write_recovery(self):
+        m, _, operate, _ = self.manager({"2": empty(2)})
+        operate.side_effect = module.InsertNotStarted()
+        with self.assertRaisesRegex(module.ManagerError, "before any new PIN was sent"):
+            await m.create(person("admin", True), "1234")
+        record = m.state["records"]["2"]
+        self.assertEqual(record["status"], "reserved")
+        self.assertNotIn("pending_pin", record)
+        self.assertNotIn("pin", record)
+        self.assertNotIn("verified_empty", record)
+        with self.assertRaises(module.ManagerError):
+            await m.create(person("admin", True), "5678")
+        self.assertEqual(operate.await_count, 1)
+
+    async def test_existing_uncertain_pin_is_never_discarded_on_reload(self):
+        m, _, operate, _ = self.manager(
+            {
+                "1": {
+                    "slot": 1,
+                    "source": "local",
+                    "status": "needs_attention",
+                    "pending_pin": "1234",
+                }
+            }
+        )
+        self.assertEqual(m.state["records"]["1"]["pending_pin"], "1234")
+        self.assertEqual(m.state["records"]["1"]["status"], "needs_attention")
+        operate.assert_not_awaited()
+
     async def test_restricted_import_never_becomes_always(self):
         m, _, operate, _ = self.manager(
             {
@@ -218,6 +249,74 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
             await m.provision(person("admin", True), [person("one"), person("two")])
         self.assertEqual(m.state["records"], {})
         operate.assert_not_awaited()
+
+
+class AdapterTests(unittest.IsolatedAsyncioTestCase):
+    """Execute the real nested adapter with fake HA services, not hardware."""
+
+    def adapter(self, error):
+        tree = ast.parse(
+            (
+                Path(__file__).resolve().parents[1]
+                / "custom_components/august_local/panel.py"
+            ).read_text()
+        )
+        setup = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "setup_panel"
+        )
+        operate = next(
+            node
+            for node in setup.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "operate"
+        )
+        entry = SimpleNamespace(options={})
+        hass = SimpleNamespace(
+            services=SimpleNamespace(
+                async_call=AsyncMock(side_effect=RuntimeError(error))
+            ),
+            config_entries=SimpleNamespace(async_update_entry=Mock()),
+        )
+        namespace = {
+            "entry": entry,
+            "hass": hass,
+            "state": {"records": {"2": {"slot": 2}}},
+            "DOMAIN": "august_local",
+            "re": re,
+            "InsertRejected": module.InsertRejected,
+            "InsertNotStarted": module.InsertNotStarted,
+        }
+        exec(
+            compile(
+                ast.Module(body=[operate], type_ignores=[]),
+                "panel_adapter_test",
+                "exec",
+            ),
+            namespace,
+        )
+        return namespace["operate"], hass
+
+    async def test_only_proven_no_write_messages_are_classified_as_blocked(self):
+        for message in (
+            "Slot occupancy could not be confirmed; no PIN insertion sent",
+            "Slot is occupied; no PIN insertion sent",
+        ):
+            with self.subTest(message=message):
+                operate, hass = self.adapter(message)
+                with self.assertRaises(module.InsertNotStarted):
+                    await operate("insert", 2, "1234", "1234")
+                hass.services.async_call.assert_awaited_once()
+                final_options = hass.config_entries.async_update_entry.call_args.kwargs[
+                    "options"
+                ]
+                self.assertNotIn("_manager_new", final_options["pins"])
+                self.assertNotIn("_manager_previous", final_options["pins"])
+
+    async def test_unknown_write_error_is_not_classified_as_not_started(self):
+        operate, _ = self.adapter("Opcode 2c: TimeoutError; outcome unknown")
+        with self.assertRaises(RuntimeError):
+            await operate("insert", 2, "1234", "1234")
 
 
 if __name__ == "__main__":

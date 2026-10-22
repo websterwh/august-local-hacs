@@ -7,6 +7,7 @@ from pathlib import Path
 import time
 
 import voluptuous as vol
+from bleak.exc import BleakError
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
@@ -172,7 +173,14 @@ async def _setup(hass, settings, ui_entry=None):
                             occupied = await asyncio.wait_for(
                                 slot_occupied(lock, slot), 10
                             )
-                        except (TimeoutError, ValueError, RuntimeError):
+                        except (
+                            TimeoutError,
+                            ValueError,
+                            RuntimeError,
+                            TypeError,
+                            AttributeError,
+                            BleakError,
+                        ):
                             raise KeypadFailure(
                                 "Slot occupancy could not be confirmed; no PIN insertion sent"
                             ) from None
