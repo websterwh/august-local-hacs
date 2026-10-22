@@ -14,11 +14,11 @@ These checks use mocked transport/HA behavior. They do not establish real authen
 
 ## Account-assisted setup checks
 
-The wizard imports an existing, installed owner key. It uses an already loaded official August account or direct sign-in and verification, then asks which account lock to import. Keep the proxy close to that lock. Key validation is read-only and does not intentionally move the deadbolt.
+The wizard imports an existing, installed owner key via the official HA August integration. The official integration must be loaded and signed in before the August Local wizard can proceed. Key validation is read-only and does not intentionally move the deadbolt.
 
 For an explicitly authorized HA acceptance test, verify:
 
-- Failed sign-in stays an account error, not a Bluetooth error; logs contain no credentials.
+- Account errors direct to the official August integration and do not expose or log credentials.
 - Account locks without installed offline keys cannot complete setup.
 - Unreachable or rejected Bluetooth credentials cannot create an integration entry.
 - Successful validation delegates the selected key/slot to Yale Access Bluetooth.

@@ -2,12 +2,16 @@
 
 import ast
 import asyncio
+import contextlib
 import importlib.util
 import json
 from pathlib import Path
+import sys
 import types
 import unittest
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+from bleak.exc import BleakError
 
 
 class _FakeAuthError(Exception):
@@ -16,11 +20,28 @@ class _FakeAuthError(Exception):
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components" / "august_local"
+
+# Load enrollment module (no relative imports).
 spec = importlib.util.spec_from_file_location(
     "august_enrollment_test", COMPONENT / "enrollment.py"
 )
 enrollment = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(enrollment)
+
+# Load account.py with a stub package that supplies _private_protocol_logs.
+# contextlib.nullcontext is a no-op context manager compatible with "with x():" usage.
+_ACCT_PKG = "_august_local_acct_test"
+_acct_pkg = types.ModuleType(_ACCT_PKG)
+_acct_pkg._private_protocol_logs = contextlib.nullcontext
+sys.modules[_ACCT_PKG] = _acct_pkg
+
+_acct_spec = importlib.util.spec_from_file_location(
+    _ACCT_PKG + ".account", COMPONENT / "account.py"
+)
+_acct_module = importlib.util.module_from_spec(_acct_spec)
+_acct_module.__package__ = _ACCT_PKG
+sys.modules[_ACCT_PKG + ".account"] = _acct_module
+_acct_spec.loader.exec_module(_acct_module)
 
 
 class ConnectionTests(unittest.IsolatedAsyncioTestCase):
@@ -165,16 +186,14 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
                 async_ble_device_from_address=Mock(return_value=None)
             ),
             "config_entries": ce,
-            "AugustAccount": Mock(),
             "ConnectedAugustAccount": Mock(side_effect=lambda rd: object()),
             "AccountError": Exception,
             "PushLock": Mock(),
+            "BleakError": BleakError,
             "AuthError": _FakeAuthError,
             "_private_protocol_logs": Mock(return_value=MagicMock()),
-            "async_create_clientsession": Mock(),
             "DOMAIN": "august_local",
             "callback": lambda f: f,
-            "_SIGN_IN_SENTINEL": "__new_account__",
         }
         exec(
             compile(
@@ -274,14 +293,15 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
 
     # -- account_source routing --
 
-    async def test_account_source_no_august_entries_routes_to_account(self):
+    async def test_account_source_no_august_entries_routes_to_setup_august(self):
+        """When no loaded August entries exist, account_source delegates to setup_august."""
         ns = self._load_namespace()
-        flow = self._config_flow(ns)
-        flow.async_step_account = AsyncMock(
-            return_value={"type": "form", "step_id": "account"}
+        flow = self._config_flow(ns)  # no august_entries
+        flow.async_step_setup_august = AsyncMock(
+            return_value={"type": "form", "step_id": "setup_august"}
         )
         await flow.async_step_account_source()
-        flow.async_step_account.assert_awaited_once()
+        flow.async_step_setup_august.assert_awaited_once()
 
     async def test_account_source_shows_form_when_entries_present(self):
         ns = self._load_namespace()
@@ -305,20 +325,6 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.get("errors", {}).get("base"), "invalid_selection")
         flow.async_create_entry.assert_not_called()
 
-    async def test_account_source_sentinel_forgets_and_routes_to_account(self):
-        ns = self._load_namespace()
-        entry = types.SimpleNamespace(
-            entry_id="aug1", title="August Home", runtime_data=object()
-        )
-        flow = self._config_flow(ns, august_entries=[entry])
-        flow._forget_account = AsyncMock()
-        flow.async_step_account = AsyncMock(
-            return_value={"type": "form", "step_id": "account"}
-        )
-        await flow.async_step_account_source({"cloud_entry_id": "__new_account__"})
-        flow._forget_account.assert_awaited_once()
-        flow.async_step_account.assert_awaited_once()
-
     async def test_account_source_valid_entry_uses_connected_account_and_routes_to_lock(
         self,
     ):
@@ -334,6 +340,113 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         await flow.async_step_account_source({"cloud_entry_id": "aug1"})
         flow.async_step_account_lock.assert_awaited_once()
         ns["ConnectedAugustAccount"].assert_called_once_with(rd)
+
+    # -- setup_august step --
+
+    async def test_setup_august_shows_form_on_first_visit(self):
+        """setup_august with no user_input shows the guidance form without aborting."""
+        ns = self._load_namespace()
+        flow = self._config_flow(ns)
+        result = await flow.async_step_setup_august()
+        self.assertEqual(result["type"], "form")
+        self.assertEqual(result["step_id"], "setup_august")
+        flow.async_abort.assert_not_called()
+
+    async def test_setup_august_retry_still_no_entries_shows_error(self):
+        """Submitting setup_august while still no loaded entries shows no_loaded_august_account."""
+        ns = self._load_namespace()
+        flow = self._config_flow(ns)  # no august_entries
+        result = await flow.async_step_setup_august(user_input={})
+        self.assertEqual(result["type"], "form")
+        self.assertEqual(
+            result.get("errors", {}).get("base"), "no_loaded_august_account"
+        )
+        flow.async_abort.assert_not_called()
+
+    async def test_setup_august_picks_up_newly_loaded_entry(self):
+        """When a loaded entry appears before submit, setup_august routes to account_source."""
+        ns = self._load_namespace()
+        entry = types.SimpleNamespace(
+            entry_id="aug1", title="August Home", runtime_data=object()
+        )
+        flow = self._config_flow(ns, august_entries=[entry])
+        flow.async_step_account_source = AsyncMock(
+            return_value={"type": "form", "step_id": "account_source"}
+        )
+        await flow.async_step_setup_august(user_input={})
+        flow.async_step_account_source.assert_awaited_once()
+
+    # -- account_source entry filtering and selection guards --
+
+    async def test_account_source_excludes_entries_without_runtime_data(self):
+        """Entries missing runtime_data are excluded; submitting their ID is invalid."""
+        ns = self._load_namespace()
+        loaded = types.SimpleNamespace(
+            entry_id="aug1", title="August", runtime_data=object()
+        )
+        unloaded = types.SimpleNamespace(
+            entry_id="aug2", title="August2", runtime_data=None
+        )
+        flow = self._config_flow(ns, august_entries=[loaded, unloaded])
+        # Initial form shows (only loaded entry passes the filter)
+        result = await flow.async_step_account_source()
+        self.assertEqual(result["step_id"], "account_source")
+        # Submitting the unloaded entry ID is rejected as invalid_selection
+        result2 = await flow.async_step_account_source({"cloud_entry_id": "aug2"})
+        self.assertEqual(result2.get("errors", {}).get("base"), "invalid_selection")
+        ns["ConnectedAugustAccount"].assert_not_called()
+
+    async def test_account_source_multiple_entries_shows_selector_form(self):
+        """Multiple loaded entries: form requires explicit selection, no entry created."""
+        ns = self._load_namespace()
+        entries = [
+            types.SimpleNamespace(
+                entry_id="aug1", title="August A", runtime_data=object()
+            ),
+            types.SimpleNamespace(
+                entry_id="aug2", title="August B", runtime_data=object()
+            ),
+        ]
+        flow = self._config_flow(ns, august_entries=entries)
+        result = await flow.async_step_account_source()
+        self.assertEqual(result["type"], "form")
+        self.assertEqual(result["step_id"], "account_source")
+        flow.async_create_entry.assert_not_called()
+        ns["ConnectedAugustAccount"].assert_not_called()
+
+    async def test_account_source_stale_id_routes_setup_august_when_all_entries_gone(
+        self,
+    ):
+        """Stale entry ID submitted while all entries have since disappeared routes to setup_august."""
+        ns = self._load_namespace()
+        entry = types.SimpleNamespace(
+            entry_id="aug1", title="August", runtime_data=object()
+        )
+        flow = self._config_flow(ns)
+        # First call returns [entry] (form shown); re-check on invalid selection returns []
+        flow.hass.config_entries.async_entries = Mock(side_effect=[[entry], []])
+        flow.async_step_setup_august = AsyncMock(
+            return_value={"type": "form", "step_id": "setup_august"}
+        )
+        await flow.async_step_account_source({"cloud_entry_id": "no_such_id"})
+        flow.async_step_setup_august.assert_awaited_once()
+        ns["ConnectedAugustAccount"].assert_not_called()
+
+    async def test_account_source_wrapper_constructor_error_aborts_safely(self):
+        """ConnectedAugustAccount constructor failure aborts with account_response_changed."""
+        ns = self._load_namespace()
+        entry = types.SimpleNamespace(
+            entry_id="aug1", title="August", runtime_data=object()
+        )
+        flow = self._config_flow(ns, august_entries=[entry])
+        ns["ConnectedAugustAccount"] = Mock(
+            side_effect=RuntimeError("secret credentials xyz")
+        )
+        result = await flow.async_step_account_source({"cloud_entry_id": "aug1"})
+        flow.async_abort.assert_called_once_with(reason="account_response_changed")
+        # Raw exception text must not appear in the abort result
+        self.assertNotIn("secret", str(result))
+        self.assertNotIn("credentials", str(result))
 
     # -- options connect guard (fires before BLE lookup or discovery) --
 
@@ -426,6 +539,29 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         flow.async_create_entry.assert_not_called()
         self.assertEqual(result.get("errors", {}).get("base"), "bluetooth_auth_failed")
 
+    async def test_transport_failure_does_not_retry_keys_or_create_entry(self):
+        ns = self._load_namespace()
+        ns[
+            "bluetooth"
+        ].async_ble_device_from_address.return_value = types.SimpleNamespace(
+            address="AA:BB:CC:DD:EE:FF"
+        )
+        lock = Mock()
+        lock.validate = AsyncMock(side_effect=BleakError("private transport context"))
+        ns["PushLock"].return_value = lock
+        flow = self._options_flow(ns)
+        flow._selected_lock = types.SimpleNamespace(
+            address="AA:BB:CC:DD:EE:FF",
+            name="Test Door",
+            serial="TEST",
+            keys=[(1, "ab" * 16), (2, "cd" * 16)],
+        )
+        result = await flow.async_step_connect({})
+        self.assertEqual(result["errors"]["base"], "bluetooth_connection_failed")
+        ns["PushLock"].assert_called_once()
+        flow.async_create_entry.assert_not_called()
+        flow.hass.config_entries.flow.async_init.assert_not_awaited()
+
     async def test_first_key_rejected_second_valid_proceeds_to_discovery(self):
         """First key raises AuthError; second validates; discovery init called with winning slot/key."""
         ns = self._load_namespace()
@@ -459,6 +595,102 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(init_kwargs["data"]["key"], b"goodkey")
         self.assertEqual(init_kwargs["data"]["address"], "AA:BB:CC:DD:EE:FF")
         flow.async_create_entry.assert_called_once()
+
+
+class AccountTests(unittest.IsolatedAsyncioTestCase):
+    """Behavioral tests for ConnectedAugustAccount — no HA imports, no network.
+
+    Uses real yalexs/aiohttp packages (installed as project dependencies).
+    _private_protocol_logs is stubbed with contextlib.nullcontext at module level.
+    """
+
+    def _make_runtime(self, token="tok-abc"):
+        """Return (runtime, api_mock, gateway_mock) with empty lock list by default."""
+        gateway = MagicMock()
+        gateway.async_get_access_token = AsyncMock(return_value=token)
+        api = MagicMock()
+        api.async_get_operable_locks = AsyncMock(return_value=[])
+        api.async_get_lock_detail = AsyncMock()
+        return types.SimpleNamespace(_api=api, _gateway=gateway), api, gateway
+
+    async def test_gateway_refreshed_on_each_locks_call(self):
+        """async_get_access_token is called once per locks() invocation, never reused."""
+        runtime, api, gateway = self._make_runtime()
+        gateway.async_get_access_token.side_effect = ["first-token", "refreshed-token"]
+        acct = _acct_module.ConnectedAugustAccount(runtime)
+        await acct.locks()
+        await acct.locks()
+        self.assertEqual(gateway.async_get_access_token.await_count, 2)
+        self.assertEqual(
+            [call.args[0] for call in api.async_get_operable_locks.await_args_list],
+            ["first-token", "refreshed-token"],
+        )
+
+    async def test_owner_lock_detail_uses_official_token_and_returns_installed_key(
+        self,
+    ):
+        runtime, api, gateway = self._make_runtime(token="official-token")
+        api.async_get_operable_locks.return_value = [
+            types.SimpleNamespace(device_id="lock-id", device_name="Test Door")
+        ]
+        api.async_get_lock_detail.return_value = types.SimpleNamespace(
+            mac_address="aa:bb:cc:dd:ee:ff",
+            serial_number="TEST-SERIAL",
+            loaded_offline_keys=[{"slot": 3, "key": "AB" * 16}],
+        )
+        acct = _acct_module.ConnectedAugustAccount(runtime)
+        locks = await acct.locks()
+        api.async_get_lock_detail.assert_awaited_once_with("official-token", "lock-id")
+        self.assertEqual(len(locks), 1)
+        self.assertEqual(locks[0].address, "AA:BB:CC:DD:EE:FF")
+        self.assertEqual(locks[0].keys, [(3, "ab" * 16)])
+        self.assertNotIn("token", vars(acct))
+
+    async def test_token_passed_to_api_list_call(self):
+        """Token returned by gateway is forwarded to async_get_operable_locks."""
+        runtime, api, gateway = self._make_runtime(token="tok-xyz-123")
+        acct = _acct_module.ConnectedAugustAccount(runtime)
+        await acct.locks()
+        api.async_get_operable_locks.assert_awaited_once()
+        self.assertEqual(api.async_get_operable_locks.call_args.args[0], "tok-xyz-123")
+
+    def test_close_leaves_official_api_session_untouched(self):
+        """close() nulls borrowed refs but never calls close/revoke on api or gateway."""
+        runtime, api, gateway = self._make_runtime()
+        api.close = Mock()
+        gateway.close = Mock()
+        acct = _acct_module.ConnectedAugustAccount(runtime)
+        acct.close()
+        api.close.assert_not_called()
+        gateway.close.assert_not_called()
+        self.assertIsNone(acct.api)
+        self.assertIsNone(acct.gateway)
+
+    async def test_sanitized_error_does_not_leak_exception_message(self):
+        """AccountError from locks() carries a fixed code string, not raw exception text."""
+        from aiohttp import ClientError
+
+        runtime, api, gateway = self._make_runtime()
+        api.async_get_operable_locks = AsyncMock(
+            side_effect=ClientError("SECRET TOKEN PAYLOAD XYZ")
+        )
+        acct = _acct_module.ConnectedAugustAccount(runtime)
+        with self.assertLogs(_acct_module._LOGGER, level="WARNING") as logs:
+            with self.assertRaises(_acct_module.AccountError) as ctx:
+                await acct.locks()
+        self.assertNotIn("SECRET TOKEN PAYLOAD XYZ", "\n".join(logs.output))
+        err_text = str(ctx.exception)
+        self.assertNotIn("SECRET", err_text)
+        self.assertNotIn("TOKEN", err_text)
+        self.assertNotIn("PAYLOAD", err_text)
+        # The error code is a fixed, safe string
+        self.assertTrue(ctx.exception.args[0].replace("_", "").isalpha())
+
+    def test_incompatible_runtime_raises_account_error_not_attribute_error(self):
+        """runtime without _api/_gateway raises AccountError, not a raw AttributeError."""
+        with self.assertRaises(_acct_module.AccountError) as ctx:
+            _acct_module.ConnectedAugustAccount(object())
+        self.assertEqual(ctx.exception.args[0], "account_response_changed")
 
 
 class MenuTests(unittest.TestCase):

@@ -22,7 +22,7 @@ Not yet supported or verified:
 2. **Bluetooth adapter** or **ESPHome Bluetooth proxy** within range of the lock
 3. **August ASL-05 lock** already registered to an August account with an offline key installed
 4. **HACS** installed (for easy updates)
-5. An August account accessible from HA — either the [official August integration](https://www.home-assistant.io/integrations/august/) already loaded in HA, or credentials for direct sign-in
+5. The [official HA August integration](https://www.home-assistant.io/integrations/august/) loaded and signed in — [add it here](https://my.home-assistant.io/redirect/config_flow_start?domain=august) if not already present
 
 ## Installation
 
@@ -45,31 +45,20 @@ Not yet supported or verified:
 
 ### Account-assisted wizard
 
-If the official [HA August integration](https://www.home-assistant.io/integrations/august/) is already loaded:
+August Local requires the official [HA August integration](https://www.home-assistant.io/integrations/august/) to be loaded and signed in before the wizard can continue. If it is not present, [add it here](https://my.home-assistant.io/redirect/config_flow_start?domain=august) and complete its supported authentication, then return to August Local setup.
 
 1. **Settings → Devices & Services → Add Integration** → search **August Local**
-2. The account-source form opens automatically
-3. Choose a loaded August account entry, or **Sign in to another August account**
+2. If no signed-in August account is loaded, the guidance step opens; complete official August setup and press **Submit** to check again. Otherwise, the account chooser opens directly
+3. Under **Choose your connected August account**, select the loaded account
 4. Select the lock registered to that account
 5. Confirm BLE key validation — the wizard connects to the lock locally and validates its installed key without moving the deadbolt
 6. Setup completes; Door PINs panel appears in the sidebar
 
-No password is entered or stored by this integration; the OAuth session is held by the official August integration.
+No password is entered or stored by August Local. Account errors direct to the official August integration; account errors and Bluetooth errors are separate. For an existing Door PINs installation, use **Configure → Reconnect account and Bluetooth key**. Selecting another lock is rejected before Bluetooth validation.
 
-### Direct sign-in
+### Updating after a rejected password login
 
-If no official August integration is loaded in HA:
-
-1. **Settings → Devices & Services → Add Integration** → search **August Local**
-2. The sign-in form opens automatically (or choose **Sign in to another August account** when a loaded account is available)
-3. Enter your August email or phone number and password
-4. Enter the verification code sent by August
-5. Select the lock registered to your account
-6. Confirm BLE key validation (no motor movement)
-
-Your password and account token are used only during this setup wizard and are not stored by this integration. Direct sign-in previously returned HTTP 403 on this installation; current success is not established. If it fails, add the official HA August integration and return to the wizard.
-
-Existing Yale Access Bluetooth entries are reused for the selected lock through the same validated account path. For an existing Door PINs installation, use **Configure → Reconnect account and Bluetooth key**. Selecting another lock is rejected before Bluetooth validation.
+Update August Local to 0.10.7 or newer in HACS and restart Home Assistant to load the replacement flow. Dismiss any unfinished old August Local password form and start setup again. Add and sign in through the official **August** integration first; it is separate from **August Local**. Existing Door PINs entries and Yale Access Bluetooth credentials do not need deleting or resetting. Keep the lock's current ownership and keys intact.
 
 ## Usage
 
@@ -119,7 +108,7 @@ This integration:
 - **PINs**: never logged, traced, or exposed to HA entity states/recorder/automations
 - **PIN slots**: non-admin users can only manage PINs in their assigned slots
 - **Admin users**: can manage all slots and settings
-- **August password/token**: used only during the setup wizard; not stored by Door PINs
+- **August account**: August Local borrows access from the official integration and never stores or logs the token or password; account errors direct to the official integration
 
 ## Known limitations
 
@@ -131,9 +120,9 @@ This integration:
 
 ## Troubleshooting
 
-### Direct sign-in rejected
+### Account error during setup
 
-Add the official [HA August integration](https://www.home-assistant.io/integrations/august/) (Settings → Add Integration → August), finish sign-in, then return to Door PINs setup. Account errors are separate from Bluetooth errors; repeated retries can trigger rate limits.
+Open the [official HA August integration](https://my.home-assistant.io/redirect/integrations/?domain=august) and verify it is loaded and signed in. Account errors are separate from Bluetooth errors; do not retry the August Local wizard until the official integration reports a healthy account. Repeated sign-in attempts can trigger rate limits on August's side.
 
 ### "No offline key"
 

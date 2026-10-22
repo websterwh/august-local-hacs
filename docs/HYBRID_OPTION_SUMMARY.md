@@ -4,7 +4,7 @@ This replaces an earlier summary that incorrectly described guessed factory enro
 
 ## Current architecture
 
-- `account.py`: account authentication/verification and discovery of already installed offline keys. Account passwords and tokens are temporary in August Local.
+- `account.py`: discovery of already installed offline keys through a loaded official HA August session. Authentication, verification, token persistence and refresh belong to the official August integration; August Local has no separate password login.
 - `config_flow.py`: one account-assisted import path, installed-key validation, and delegation to the official Yale Access Bluetooth integration. Existing installations can reconnect their same lock through options.
 - `protocol.py`, `manager.py`, `panel.py`: local PIN operations and per-HA-user management of explicitly owned/reserved slots. A compatible, already paired keypad is required. Local records are not a complete inventory of the lock's PINs.
 - `auto_lock.py`, `nearby.py`, `binary_sensor.py`: lock-native timer operations and HA-side proximity/arrival support. These implementations do not establish that all app features work on every firmware.

@@ -22,13 +22,15 @@ No verified decrypted factory-commissioning HTTP exchange was recovered in this 
 
 `tests/test_setup_regressions.py` contains synthetic setup regression checks using mocked Home Assistant/Bluetooth behavior. These exercise software branches; they do not test a running HA instance, Bluetooth proxies, the live August API, factory registration, calibration, keypad pairing, or motors.
 
-For version 0.10.6, the following command passed **19 synthetic tests** in an isolated Python environment:
+For version 0.10.7, the following command passed **32 synthetic tests** in an isolated Python environment:
 
 ```bash
 python -m unittest discover -s tests -p 'test_setup_regressions.py' -v
 ```
 
-Coverage includes account-source routing, credential cleanup when switching sources, rejection of a different lock before Bluetooth access, invalid-key rejection, sequential key fallback, and delegation of the validated key to the upstream discovery flow. Integration Python syntax, JSON translation parity, direct account-library requirements, and the release files' whitespace were also checked. The isolated environment's dependency check passed. Unrelated tracked agent-runtime files have whitespace warnings and were left untouched.
+Coverage includes the no-account guidance and retry path, loaded-account selection and stale-selection rejection, borrowing a refreshed official-session token on every discovery call, discovery of an installed owner key, cleanup without closing the shared session, sanitized account failures, rejection of a different lock before Bluetooth access, invalid-key rejection, sequential key fallback, and separation of transport failures from invalid keys. Ruff passed for `account.py` and `config_flow.py`; the isolated environment's dependency check passed.
+
+Live HA inspection found no configured official August account, so actual OAuth login/refresh and physical key validation were not acceptance-tested. The user must complete sign-in through the official August integration. No account was created or changed, and no lock operation was sent.
 
 Do not run the hardware component suite as a default regression gate: it contains experimental Bluetooth writes. See [LOCAL_TESTING.md](LOCAL_TESTING.md).
 

@@ -2,23 +2,23 @@
 
 import asyncio
 import logging
+
 import voluptuous as vol
+from bleak.exc import BleakError
 from homeassistant import config_entries
 from homeassistant.components import bluetooth
 from homeassistant.core import callback
 from homeassistant.helpers import selector
-from homeassistant.helpers.aiohttp_client import async_create_clientsession
-from yalexs_ble import PushLock, AuthError
+from yalexs_ble import AuthError, PushLock
+
 from . import DOMAIN, _private_protocol_logs
-from .account import AugustAccount, ConnectedAugustAccount, AccountError
+from .account import AccountError, ConnectedAugustAccount
 
 _LOGGER = logging.getLogger(__name__)
-_SIGN_IN_SENTINEL = "__new_account__"
 
 
 class AccountSteps:
     _account = None
-    _account_session = None
     _account_locks = None
     _selected_lock = None
 
@@ -26,9 +26,6 @@ class AccountSteps:
         if self._account:
             self._account.close()
         self._account = None
-        if self._account_session is not None:
-            await self._account_session.close()
-            self._account_session = None
         self._account_locks = None
         self._selected_lock = None
 
@@ -39,28 +36,31 @@ class AccountSteps:
             if getattr(e, "runtime_data", None) is not None
         ]
         if not entries:
-            return await self.async_step_account()
+            return await self.async_step_setup_august()
         errors = {}
         if user_input is not None:
             chosen = user_input["cloud_entry_id"]
-            if chosen == _SIGN_IN_SENTINEL:
-                await self._forget_account()
-                return await self.async_step_account()
             entry = next((e for e in entries if e.entry_id == chosen), None)
             if entry is None:
+                # Re-check: entry may have disappeared while the form was visible.
+                entries = [
+                    e
+                    for e in self.hass.config_entries.async_entries("august")
+                    if getattr(e, "runtime_data", None) is not None
+                ]
+                if not entries:
+                    return await self.async_step_setup_august()
                 errors["base"] = "invalid_selection"
             else:
                 await self._forget_account()
-                self._account = ConnectedAugustAccount(entry.runtime_data)
+                try:
+                    self._account = ConnectedAugustAccount(entry.runtime_data)
+                except AccountError:
+                    return self.async_abort(reason="account_response_changed")
                 return await self.async_step_account_lock()
         choices = [
             selector.SelectOptionDict(value=e.entry_id, label=e.title) for e in entries
         ]
-        choices.append(
-            selector.SelectOptionDict(
-                value=_SIGN_IN_SENTINEL, label="Sign in to another August account"
-            )
-        )
         return self.async_show_form(
             step_id="account_source",
             errors=errors,
@@ -78,63 +78,29 @@ class AccountSteps:
             ),
         )
 
-    async def async_step_account(self, user_input=None):
+    async def async_step_setup_august(self, user_input=None):
+        """Shown when no loaded official August entry exists yet."""
         errors = {}
         if user_input is not None:
-            await self._forget_account()
-            self._account_session = async_create_clientsession(self.hass)
-            self._account = AugustAccount(self._account_session)
-            try:
-                state = await self._account.login(
-                    user_input["login_method"],
-                    user_input["username"].strip(),
-                    user_input["password"],
-                )
-                if state == "verification":
-                    return await self.async_step_verification()
-                return await self.async_step_account_lock()
-            except AccountError as exc:
-                errors["base"] = str(exc)
+            entries = [
+                e
+                for e in self.hass.config_entries.async_entries("august")
+                if getattr(e, "runtime_data", None) is not None
+            ]
+            if not entries:
+                errors["base"] = "no_loaded_august_account"
+            else:
+                return await self.async_step_account_source()
         return self.async_show_form(
-            step_id="account",
+            step_id="setup_august",
             errors=errors,
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        "login_method", default="email"
-                    ): selector.SelectSelector(
-                        selector.SelectSelectorConfig(options=["email", "phone"])
-                    ),
-                    vol.Required("username"): str,
-                    vol.Required("password"): selector.TextSelector(
-                        selector.TextSelectorConfig(
-                            type=selector.TextSelectorType.PASSWORD
-                        )
-                    ),
-                }
-            ),
-        )
-
-    async def async_step_verification(self, user_input=None):
-        errors = {}
-        if self._account is None:
-            return await self.async_step_account()
-        if user_input is not None:
-            try:
-                await self._account.verify(user_input["code"].strip())
-                return await self.async_step_account_lock()
-            except AccountError as exc:
-                errors["base"] = str(exc)
-        return self.async_show_form(
-            step_id="verification",
-            errors=errors,
-            data_schema=vol.Schema({vol.Required("code"): str}),
+            data_schema=vol.Schema({}),
         )
 
     async def async_step_account_lock(self, user_input=None):
         errors = {}
         if self._account is None:
-            return await self.async_step_account()
+            return await self.async_step_account_source()
         if self._account_locks is None:
             try:
                 self._account_locks = await self._account.locks()
@@ -176,7 +142,7 @@ class AccountSteps:
         errors = {}
         lock = self._selected_lock
         if lock is None:
-            return await self.async_step_account()
+            return await self.async_step_account_source()
         if isinstance(self, config_entries.OptionsFlow):
             ble_entry = self.hass.config_entries.async_get_entry(
                 self.config_entry.data["entry_id"]
@@ -210,7 +176,20 @@ class AccountSteps:
                                 break
                             except AuthError:
                                 continue
-                except Exception:
+                except (
+                    BleakError,
+                    TimeoutError,
+                    OSError,
+                    ValueError,
+                    TypeError,
+                    RuntimeError,
+                    KeyError,
+                    AttributeError,
+                ) as exc:
+                    _LOGGER.warning(
+                        "August Bluetooth key validation failed: exception=%s",
+                        type(exc).__name__,
+                    )
                     errors["base"] = "bluetooth_connection_failed"
                 if found is None and not errors:
                     errors["base"] = "bluetooth_auth_failed"

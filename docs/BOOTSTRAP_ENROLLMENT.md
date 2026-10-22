@@ -6,17 +6,13 @@
 
 ## Account-assisted key import
 
-The wizard supports two sign-in paths:
+August Local imports the lock's already-installed Bluetooth offline key via the official [HA August integration](https://www.home-assistant.io/integrations/august/). That integration must be loaded and signed in before the August Local wizard can proceed. [Add it here](https://my.home-assistant.io/redirect/config_flow_start?domain=august) if not already present and complete its supported authentication.
 
-**Option A — via HA's official August integration (preferred)**
-If the official [August integration](https://www.home-assistant.io/integrations/august/) is already loaded in HA, select it in the wizard. No password is entered or stored by Door PINs; the OAuth session is held by the official integration.
+In the August Local wizard, select the account under **Choose your connected August account**. If the account is not loaded yet, finish official August setup and press **Submit** on the guidance step to check again. Select the lock registered to that account. The wizard then connects to the lock locally over BLE and validates its installed key without moving the deadbolt.
 
-**Option B — direct sign-in**
-Enter your August email/phone and password. The wizard uses these only during setup; the password and account token are not stored or exported by this integration. The official August integration may store its own OAuth session separately.
+No password is entered or stored by Door PINs. August Local borrows API access from the official integration, which handles token persistence and refresh.
 
-After sign-in, select the lock registered to your account. The wizard then connects to the lock locally over BLE and validates its installed key without moving the deadbolt.
-
-**What is stored after setup:** The validated BLE key and slot number are stored by `yalexs_ble` inside HA's config. Door PINs stores the `yalexs_ble` entry reference and PIN management settings. No August password or account token is retained by Door PINs.
+**What is stored after setup:** The validated BLE key and slot number are stored by `yalexs_ble` inside HA's config. Door PINs stores the `yalexs_ble` entry reference and PIN management settings. No August account token or password is retained by Door PINs.
 
 **What this does not guarantee:** Local BLE control of the lock does not guarantee the lock's own WiFi module stops contacting August's cloud. The official August integration may independently refresh its OAuth session and contact August. Key permanence — whether the offline key remains valid after account changes, lock firmware updates, or factory reset — has not been verified.
 
@@ -27,7 +23,7 @@ This wizard cannot register a factory-reset lock or provision a usable owner cre
 1. Register it to an August account using the official August app (iOS or Android)
 2. Allow the app to provision the lock's offline key through August's servers
 
-Once provisioned, Door PINs can import that key using Option A or B above. Full offline commissioning (without any August account or app interaction) is not possible with the current codebase.
+Once provisioned, Door PINs can import that key via the official HA August integration as described above. Full offline commissioning (without any August account or app interaction) is not possible with the current codebase.
 
 ### Account-assisted full-setup research
 

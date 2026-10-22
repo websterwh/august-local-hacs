@@ -6,7 +6,7 @@ A Home Assistant custom integration that adds local PIN/keypad management, lock-
 
 ## What this actually does
 
-- Imports a lock's already-installed Bluetooth offline key via the official HA August integration's OAuth session (preferred) or direct email/password sign-in (not guaranteed to work — see Limitations).
+- Imports a lock's already-installed Bluetooth offline key via the official HA August integration's OAuth session.
 - Validates the imported key against the physical lock over BLE without moving the deadbolt.
 - Configures Yale Access Bluetooth (`yalexs_ble`) for local BLE control and adds the Door PINs panel.
 - Adds/changes/deletes PINs on explicitly owned or reserved keypad slots over the local BLE connection.
@@ -15,7 +15,7 @@ A Home Assistant custom integration that adds local PIN/keypad management, lock-
 - Passive Bluetooth-beacon "near door" detection plus a generated arrival-unlock automation using HA Companion app / BLE beacon proximity — not location alone.
 - A sidebar panel (`Door PINs`) for PIN management instead of YAML service calls.
 
-**Credential handling:** Your August password and account token are used only during setup and are not stored or exported by this integration. The validated BLE key and slot are stored by `yalexs_ble` in HA config. The official August integration may independently persist and refresh its OAuth session and contact August's cloud. Local BLE control of the lock does not guarantee the lock's WiFi module never contacts August's cloud, nor does it guarantee key permanence.
+**Credential handling:** August Local borrows API access from the official HA August integration and never logs, stores, or exports the account token or password. Token persistence and refresh are handled entirely by the official integration. The validated BLE key and slot are stored by `yalexs_ble` in HA config. The official August integration may independently contact August's cloud. Local BLE control does not guarantee the lock's WiFi module never contacts August's cloud, nor does it guarantee key permanence.
 
 ## What this does **not** do
 
@@ -30,18 +30,18 @@ A Home Assistant custom integration that adds local PIN/keypad management, lock-
 - A Bluetooth adapter or proxy within range of the lock
 - An August ASL-05 lock already registered to an August account with an installed offline key
 - The [Yale Access Bluetooth](https://www.home-assistant.io/integrations/yalexs_ble/) integration (configured by this wizard, or pre-existing)
-- An August account accessible to Home Assistant — either via the [official HA August integration](https://www.home-assistant.io/integrations/august/) or via direct sign-in
+- The [official HA August integration](https://www.home-assistant.io/integrations/august/) loaded and signed in — August Local borrows its account access
 
 ## Installation & Setup
 
 1. Open **HACS** in Home Assistant
 2. **⋮ → Custom repositories** → add `https://github.com/websterwh/august-local-hacs`, category **Integration**
 3. Install **August Local**, restart Home Assistant
-4. **Settings → Devices & Services → Add Integration** → search "August Local"
-5. Select a loaded official August account or **Sign in to another August account**. Without a loaded account, direct sign-in opens automatically. Complete any verification requested.
-6. Select an already registered account lock, then confirm BLE key validation (no motor movement). Existing Yale Access Bluetooth credentials can be updated for that same lock; there is no separate unvalidated-attachment path.
+4. First add the official August integration if not already loaded: [Settings → Devices & Services → August](https://my.home-assistant.io/redirect/config_flow_start?domain=august) and complete its supported authentication
+5. **Settings → Devices & Services → Add Integration** → search "August Local"; press **Submit** when the setup_august guidance appears, then choose the loaded August account under **Choose your connected August account**
+6. Select an already registered account lock, then confirm BLE key validation (no motor movement). Existing Yale Access Bluetooth credentials can be updated for that same lock.
 
-Direct sign-in previously received HTTP 403 on this installation; its current success is not established. The official August account route avoids entering another password here. Factory registration, calibration and keypad pairing are not part of this wizard yet.
+No password is entered or stored by August Local. Account errors point you back to the official August integration, not a separate password form. Factory registration, calibration, and keypad pairing are not part of this wizard yet.
 
 ## Using it
 

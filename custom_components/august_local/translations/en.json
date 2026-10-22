@@ -2,34 +2,18 @@
   "title": "August Local",
   "config": {
     "step": {
+      "setup_august": {
+        "title": "Connect your August account in Home Assistant",
+        "description": "August Local uses the official August integration for sign-in, verification and token refresh. [Add August to Home Assistant](https://my.home-assistant.io/redirect/config_flow_start?domain=august), finish signing in there, then return here and press Submit to check again. If August is already configured, finish any reauthentication and make sure it is loaded. No password is collected by August Local."
+      },
       "account_source": {
-        "title": "Set up Door PINs",
-        "description": "This wizard imports an already registered lock and its installed Bluetooth key. Full factory registration, key calibration, and keypad pairing are not implemented. Your account token and password are used only during this setup and are not saved.",
-        "data": {
-          "cloud_entry_id": "August account"
-        }
-      },
-      "account": {
-        "title": "Sign in to August",
-        "description": "Imports an already registered lock and its installed Bluetooth key. Your password and account token are used only during this setup and are not saved.",
-        "data": {
-          "login_method": "Sign-in method",
-          "username": "Email or phone number",
-          "password": "Password"
-        }
-      },
-      "verification": {
-        "title": "Verify your August account",
-        "description": "Enter the verification code sent by August.",
-        "data": {
-          "code": "Verification code"
-        }
+        "title": "Choose your connected August account",
+        "description": "Select an account already signed in through Home Assistant’s official August integration. August Local uses that session to retrieve an installed Bluetooth key; it does not save a separate account token. To use another account, add it to the official August integration first. Factory registration, calibration and keypad pairing are not implemented.",
+        "data": {"cloud_entry_id": "August account"}
       },
       "account_lock": {
         "title": "Choose your lock",
-        "data": {
-          "lock_id": "Lock"
-        }
+        "data": {"lock_id": "Lock"}
       },
       "connect": {
         "title": "Connect {name} locally",
@@ -37,114 +21,67 @@
       }
     },
     "error": {
-      "invalid_auth": "August rejected the account sign-in request. This may be an account, login-method, or API-access restriction. It does not indicate a Bluetooth failure.",
-      "cannot_connect": "Could not complete this step. Try again after checking the connection.",
-      "invalid_code": "The verification code was not accepted.",
-      "invalid_selection": "Select a valid option from the list.",
-      "no_offline_key": "This lock has no installed offline key available to this account. Factory setup and key provisioning are not yet supported by this wizard.",
-      "account_connection_failed": "Home Assistant could not reach August\u2019s account service. This step does not use Bluetooth.",
-      "account_response_changed": "August returned an account response this version could not interpret. No Bluetooth operation was attempted. A diagnostic with the failure stage and exception type is in HA\u2019s logs; credentials are withheld.",
-      "account_service_error": "August account sign-in could not complete. Check the sanitized diagnostic in HA\u2019s logs. This step does not use Bluetooth.",
-      "account_endpoint_unavailable": "August\u2019s account endpoint is unavailable for this sign-in method. This step does not use Bluetooth.",
-      "invalid_account_request": "August rejected the account request. Check email versus phone sign-in and, for phone, use the international country code.",
-      "rate_limited": "August is rate-limiting sign-in. Wait before trying again.",
+      "no_loaded_august_account": "No signed-in August account is loaded yet. Complete setup or reauthentication in Home Assistant’s official August integration, then try again here.",
+      "invalid_selection": "Select an available account or lock from the list.",
+      "no_offline_key": "This account has no installed offline key for the selected lock. Factory setup and new key provisioning are not supported by this wizard.",
       "bluetooth_connection_failed": "The lock could not be reached over Bluetooth. Keep the proxy near the lock and the August app closed, then retry.",
-      "bluetooth_auth_failed": "The installed key was rejected by the lock. Refresh its provisioned key; this is separate from August account sign-in.",
-      "no_connectable_device": "No connectable Bluetooth device was found at this address.",
-      "enrollment_failed": "Local enrollment failed at stage '{stage}'. No key was confirmed as enrolled. The sequence is experimental and has not been verified end-to-end. Check HA logs for the error type; secrets are withheld."
+      "bluetooth_auth_failed": "The installed Bluetooth key was rejected. Refresh the provisioned key through the official August integration; this is separate from account sign-in."
     },
     "abort": {
       "single_instance_allowed": "Door PINs is already configured. Use Configure to reconnect its lock.",
-      "no_account_locks": "August returned no owner-accessible locks. Check the account; this wizard cannot yet register a factory-reset lock.",
-      "bluetooth_setup_failed": "The HA Bluetooth setup could not finish. Check Yale Access Bluetooth.",
+      "no_account_locks": "The connected August account returned no owner-accessible locks. Check the selected official August account. Factory registration is not supported here.",
+      "bluetooth_setup_failed": "Home Assistant’s Bluetooth setup could not finish. Check Yale Access Bluetooth.",
       "different_lock": "Reconnect the same lock selected for Door PINs.",
-      "invalid_selection": "Select a valid option from the list.",
-      "cannot_connect": "Could not complete this step. Try again after checking the connection.",
-      "invalid_auth": "August rejected the sign-in or the installed Bluetooth key. Check your sign-in method and account details.",
-      "account_connection_failed": "Home Assistant could not reach August\u2019s account service. This step does not use Bluetooth.",
-      "account_response_changed": "August returned an account response this version could not interpret. No Bluetooth operation was attempted. A diagnostic with the failure stage and exception type is in HA\u2019s logs; credentials are withheld.",
-      "account_service_error": "August account sign-in could not complete. Check the sanitized diagnostic in HA\u2019s logs. This step does not use Bluetooth.",
-      "account_endpoint_unavailable": "August\u2019s account endpoint is unavailable for this sign-in method. This step does not use Bluetooth.",
-      "invalid_account_request": "August rejected the account request. Check email versus phone sign-in and, for phone, use the international country code.",
-      "rate_limited": "August is rate-limiting sign-in. Wait before trying again."
+      "invalid_auth": "The official August session was rejected. Complete reauthentication in Home Assistant’s August integration, then restart this setup. This is not a Bluetooth failure.",
+      "account_connection_failed": "Home Assistant could not reach August’s account service. Check the official August integration and network connection.",
+      "account_response_changed": "The official August account session or response could not be read by this version. Check compatibility and sanitized HA logs; credentials are withheld.",
+      "account_service_error": "The connected August account request failed. Check the official August integration and sanitized HA logs.",
+      "account_endpoint_unavailable": "August’s account endpoint is unavailable. Check the official August integration.",
+      "invalid_account_request": "August rejected a request made through the connected official account. Check the official August integration and sanitized HA logs.",
+      "rate_limited": "August is rate-limiting account requests. Wait before retrying."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Door PINs",
-        "menu_options": {
-          "manage": "Open PIN management",
-          "account_source": "Reconnect account and Bluetooth key"
-        }
+        "menu_options": {"manage": "Open PIN management", "account_source": "Reconnect account and Bluetooth key"}
       },
-      "manage": {
-        "title": "PIN management",
-        "description": "Open [Door PINs](/august-local-keypad) in the sidebar."
+      "manage": {"title": "PIN management", "description": "Open [Door PINs](/august-local-keypad) in the sidebar."},
+      "setup_august": {
+        "title": "Connect your August account in Home Assistant",
+        "description": "August Local uses the official August integration for sign-in, verification and token refresh. [Add August to Home Assistant](https://my.home-assistant.io/redirect/config_flow_start?domain=august), finish signing in there, then return here and press Submit to check again. If August is already configured, finish any reauthentication and make sure it is loaded. No password is collected by August Local."
       },
       "account_source": {
-        "title": "Reconnect August account",
-        "description": "Reimports the installed Bluetooth key for the already registered lock. Full factory registration, key calibration, and keypad pairing are not implemented. Your account token and password are used only during this setup and are not saved.",
-        "data": {
-          "cloud_entry_id": "August account"
-        }
+        "title": "Choose your connected August account",
+        "description": "Select an account already signed in through Home Assistant’s official August integration. August Local uses that session to retrieve the installed Bluetooth key for the same lock. It does not save a separate account token. Add other accounts to the official August integration first. Factory registration, calibration and keypad pairing are not implemented.",
+        "data": {"cloud_entry_id": "August account"}
       },
-      "account": {
-        "title": "Sign in to August",
-        "description": "Imports an already registered lock and its installed Bluetooth key. Your password and account token are used only during this setup and are not saved.",
-        "data": {
-          "login_method": "Sign-in method",
-          "username": "Email or phone number",
-          "password": "Password"
-        }
-      },
-      "verification": {
-        "title": "Verify your August account",
-        "description": "Enter the verification code sent by August.",
-        "data": {
-          "code": "Verification code"
-        }
-      },
-      "account_lock": {
-        "title": "Choose your lock",
-        "data": {
-          "lock_id": "Lock"
-        }
-      },
+      "account_lock": {"title": "Choose your lock", "data": {"lock_id": "Lock"}},
       "connect": {
         "title": "Connect {name} locally",
         "description": "Keep your Bluetooth proxy near the lock and close the August app. Continue to verify its installed key and configure local HA access. This does not move the deadbolt."
       }
     },
     "error": {
-      "invalid_auth": "August rejected the account sign-in request. This may be an account, login-method, or API-access restriction. It does not indicate a Bluetooth failure.",
-      "cannot_connect": "Could not complete this step. Try again after checking the connection.",
-      "invalid_code": "The verification code was not accepted.",
-      "invalid_selection": "Select a valid option from the list.",
-      "no_offline_key": "This lock has no installed offline key available to this account. Factory setup and key provisioning are not yet supported by this wizard.",
-      "account_connection_failed": "Home Assistant could not reach August\u2019s account service. This step does not use Bluetooth.",
-      "account_response_changed": "August returned an account response this version could not interpret. No Bluetooth operation was attempted. A diagnostic with the failure stage and exception type is in HA\u2019s logs; credentials are withheld.",
-      "account_service_error": "August account sign-in could not complete. Check the sanitized diagnostic in HA\u2019s logs. This step does not use Bluetooth.",
-      "account_endpoint_unavailable": "August\u2019s account endpoint is unavailable for this sign-in method. This step does not use Bluetooth.",
-      "invalid_account_request": "August rejected the account request. Check email versus phone sign-in and, for phone, use the international country code.",
-      "rate_limited": "August is rate-limiting sign-in. Wait before trying again.",
+      "no_loaded_august_account": "No signed-in August account is loaded yet. Complete setup or reauthentication in Home Assistant’s official August integration, then try again here.",
+      "invalid_selection": "Select an available account or lock from the list.",
+      "no_offline_key": "This account has no installed offline key for the selected lock. Factory setup and new key provisioning are not supported by this wizard.",
       "bluetooth_connection_failed": "The lock could not be reached over Bluetooth. Keep the proxy near the lock and the August app closed, then retry.",
-      "bluetooth_auth_failed": "The installed key was rejected by the lock. Refresh its provisioned key; this is separate from August account sign-in."
+      "bluetooth_auth_failed": "The installed Bluetooth key was rejected. Refresh the provisioned key through the official August integration; this is separate from account sign-in."
     },
     "abort": {
       "single_instance_allowed": "Door PINs is already configured. Use Configure to reconnect its lock.",
-      "no_account_locks": "August returned no owner-accessible locks. Check the account; this wizard cannot yet register a factory-reset lock.",
-      "bluetooth_setup_failed": "The HA Bluetooth setup could not finish. Check Yale Access Bluetooth.",
+      "no_account_locks": "The connected August account returned no owner-accessible locks. Check the selected official August account. Factory registration is not supported here.",
+      "bluetooth_setup_failed": "Home Assistant’s Bluetooth setup could not finish. Check Yale Access Bluetooth.",
       "different_lock": "Reconnect the same lock selected for Door PINs.",
-      "invalid_selection": "Select a valid option from the list.",
-      "cannot_connect": "Could not complete this step. Try again after checking the connection.",
-      "invalid_auth": "August rejected the sign-in or the installed Bluetooth key. Check your sign-in method and account details.",
-      "account_connection_failed": "Home Assistant could not reach August\u2019s account service. This step does not use Bluetooth.",
-      "account_response_changed": "August returned an account response this version could not interpret. No Bluetooth operation was attempted. A diagnostic with the failure stage and exception type is in HA\u2019s logs; credentials are withheld.",
-      "account_service_error": "August account sign-in could not complete. Check the sanitized diagnostic in HA\u2019s logs. This step does not use Bluetooth.",
-      "account_endpoint_unavailable": "August\u2019s account endpoint is unavailable for this sign-in method. This step does not use Bluetooth.",
-      "invalid_account_request": "August rejected the account request. Check email versus phone sign-in and, for phone, use the international country code.",
-      "rate_limited": "August is rate-limiting sign-in. Wait before trying again."
+      "invalid_auth": "The official August session was rejected. Complete reauthentication in Home Assistant’s August integration, then restart this setup. This is not a Bluetooth failure.",
+      "account_connection_failed": "Home Assistant could not reach August’s account service. Check the official August integration and network connection.",
+      "account_response_changed": "The official August account session or response could not be read by this version. Check compatibility and sanitized HA logs; credentials are withheld.",
+      "account_service_error": "The connected August account request failed. Check the official August integration and sanitized HA logs.",
+      "account_endpoint_unavailable": "August’s account endpoint is unavailable. Check the official August integration.",
+      "invalid_account_request": "August rejected a request made through the connected official account. Check the official August integration and sanitized HA logs.",
+      "rate_limited": "August is rate-limiting account requests. Wait before retrying."
     }
   }
 }
