@@ -4,9 +4,9 @@ For an already commissioned August ASL-05 and paired original August Smart Keypa
 
 ## Setup in the HA UI
 
-Add **August Local Keypad**, then choose an existing Bluetooth lock or **Use August account connected to HA**. For an existing Door PINs installation, choose **Configure → Use August account connected to HA**. Connect the official August integration first if necessary; its OAuth flow handles sign-in privately. Door PINs borrows that connection to discover installed owner keys and slots, verifies a key without moving the deadbolt, and delegates Bluetooth configuration to HA's Yale integration. It does not close the official integration's session or save a separate account token.
+Add **August Local** to start the account-assisted wizard. Choose a loaded official August account when available, or sign in to another account; without a loaded account, sign-in opens directly. Complete verification, select an already registered lock, and validate its installed Bluetooth key. For an existing Door PINs installation, choose **Configure → Reconnect account and Bluetooth key**. Reconnection rejects a different lock before Bluetooth validation. Door PINs delegates Bluetooth configuration to HA's Yale integration without moving the deadbolt. It does not close the official integration's session or save a separate account token.
 
-An optional legacy email/phone/password route remains available, but this installation returned HTTP 403 before Bluetooth. A 403 alone does not identify whether credentials, API access, or a web firewall caused rejection. Do not repeatedly retry the legacy route. Its HTTP session is isolated from other HA integrations, and its diagnostics contain only stage, exception class, and numeric status.
+Direct email/phone/password sign-in previously returned HTTP 403 on this installation before Bluetooth. A 403 alone does not identify whether credentials, API access, or a web firewall caused rejection. Do not repeatedly retry it. Its HTTP session is isolated from other HA integrations, and its diagnostics contain only stage, exception class, and numeric status. A loaded official August account avoids entering another password here. Direct-sign-in passwords and account tokens are temporary; the validated offline key and slot are stored by Yale Access Bluetooth, not exported to the panel.
 
 This is an import of a key already installed on the lock. It does not register a factory-reset lock or install a missing owner key. If the account has no available offline key, the flow reports that limitation rather than claiming setup succeeded. Only the August account brand is supported by this direct login flow; Yale Home regional accounts use different authentication and are not interchangeable.
 
@@ -23,7 +23,9 @@ PIN contents cannot be reliably enumerated from tested ASL-05 firmware 1.1.30. T
 
 ## Commissioning research
 
-`commissioning.py` contains an experimental SDK adapter for the observed online authentication endpoints and continuous security-channel CBC codec. It is not exposed in the setup wizard. Tests validate HTTP request shapes, random values, cipher chaining/reset behavior, and two private captured initialization exchanges. No end-to-end factory commissioning has been verified. Registration, owner-key installation, calibration, and interrupted-setup recovery remain required before enabling this as factory setup.
+`commissioning.py` contains an experimental SDK adapter for online authentication endpoints and a continuous security-channel CBC codec. It is not exposed in the setup wizard. No end-to-end factory commissioning has been verified. Registration, owner-key installation, calibration, keypad pairing, and interrupted-setup recovery remain required before enabling this as factory setup. See [test evidence limitations](../../docs/TEST_RESULTS.md); synthetic checks are not hardware verification.
+
+A dedicated secondary owner may isolate HA keys from phone-triggered rotation or help cloud key availability; accumulating credentials is not established to improve auto-unlock or PIN capabilities. Key slots and PIN slots are different. See [credential and reset testing scope](../../docs/BOOTSTRAP_ENROLLMENT.md). Do not reset or delete an account on the assumption that keys survive.
 
 ## Dependencies and related work
 

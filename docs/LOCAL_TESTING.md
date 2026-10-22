@@ -1,113 +1,34 @@
-# August Local - Local Testing Plan
+# August Local: Local Testing
 
-## Current Status
+## Safe software checks
 
-- ✅ Integration renamed to `august_local` (domain + display name)
-- ✅ Enrollment step disabled (pending connectivity verification)
-- ✅ All core PIN/auto-lock features ready
-- ⚠️ **Lock connectivity issue**: Lock not responding after enrollment attempt
-
-## Immediate Next Step
-
-**The lock is not advertising BLE.** It needs to be woken up or reset.
-
-### 1. Wake/Reset the Lock
-
-Try **in order**:
-
-1. **Press the lock button** (any press should wake it)
-2. **Wait 30 seconds** and scan again
-3. **If still offline**: Hold reset button 30+ seconds (until LED flashes) to factory-reset
-
-Then run:
+Run the synthetic setup regressions without connecting to a lock:
 
 ```bash
-python3 debug_lock_connectivity.py
+python -m unittest discover -s tests -p 'test_setup_regressions.py' -v
 ```
 
-This will show:
-- All BLE devices in range
-- Whether lock appears
-- Connection attempts with multiple timeouts
+These checks use mocked transport/HA behavior. They do not establish real authentication, registration, key installation, calibration, keypad pairing, or motor operation. Use an isolated Python environment with the declared dependencies; do not downgrade the host's cryptography package to accommodate capture tooling.
 
-### 2. If Lock Still Not Found
+`tests/test_all_components.py` and `tests/debug_lock_connectivity.py` access Bluetooth hardware. The former also contains experimental writes. They are **not** safe default software verification commands and are not evidence of successful enrollment. See [TEST_RESULTS.md](TEST_RESULTS.md).
 
-- Check: Is the lock powered on? (should have indicator/LED)
-- Check: Is Bluetooth adapter working? (script should show OTHER devices)
-- Check: Is lock within 5 meters of adapter?
+## Account-assisted setup checks
 
-If other devices appear in scan but not lock → lock's BLE is offline/crashed
+The wizard imports an existing, installed owner key. It uses an already loaded official August account or direct sign-in and verification, then asks which account lock to import. Keep the proxy close to that lock. Key validation is read-only and does not intentionally move the deadbolt.
 
-### 3. Once Lock Appears
+For an explicitly authorized HA acceptance test, verify:
 
-Run the debug script again. Once it connects successfully, we can proceed with testing.
+- Failed sign-in stays an account error, not a Bluetooth error; logs contain no credentials.
+- Account locks without installed offline keys cannot complete setup.
+- Unreachable or rejected Bluetooth credentials cannot create an integration entry.
+- Successful validation delegates the selected key/slot to Yale Access Bluetooth.
+- Reconnecting an existing installation to another lock is rejected before Bluetooth validation.
+- PIN records, slots, keys and unrelated account locks are not changed by failed setup.
 
-## Testing Phases (After Connectivity)
+Do not run setup concurrently with another BLE client. Direct desktop Bluetooth is not a substitute for testing HA's proxy path.
 
-### Phase 1: Existing Features (No Enrollment)
+## Hardware operations require separate scope
 
-Use the existing setup methods (not factory-reset enrollment):
+Do not automatically reset, unpair, remove ownership, delete accounts, revoke keys, program PINs, alter timers, or enable arrival-unlock automations to troubleshoot connectivity. Check discovery, proxy reachability, existing integration state, and sanitized errors first. A missing advertisement or timeout does not identify the cause.
 
-1. **Via August Account** (if you have one):
-   - Add Integration → August Local → Use August Account
-   - HA will import key from cloud account
-   
-2. **Via Yale Access Bluetooth** (if lock is already in that integration):
-   - Add Integration → August Local → Use Existing Bluetooth Lock
-   - HA will use existing yale entry's key
-
-3. Test:
-   - ✓ Door PINs panel loads
-   - ✓ Can create/delete PINs
-   - ✓ Can read lock status
-   - ✓ Can set auto-lock timer
-   - ✓ Can configure auto-unlock
-
-### Phase 2: Enrollment Feature (Once Connectivity Confirmed)
-
-Once lock is responsive, we'll:
-
-1. Factory-reset again
-2. Enable `async_step_enroll()` in config_flow.py
-3. Test enrollment flow:
-   - Nonce capture
-   - Session key derivation
-   - Offline key generation
-   - Key write success
-4. Then test PIN operations with provisioned key
-
-## Debugging Commands
-
-```bash
-# Full BLE scan (current status)
-python3 debug_lock_connectivity.py
-
-# Quick scan (what devices are visible)
-python3 -c "
-import asyncio
-from bleak import BleakScanner
-async def scan():
-    devices = await BleakScanner.discover(timeout=10)
-    for d in devices:
-        if d.address.lower() == '78:9c:85:33:f8:34':
-            print(f'[✓] Lock found: {d.name}')
-            return
-    print('[!] Lock not found')
-asyncio.run(scan())
-"
-```
-
-## Files
-
-- `debug_lock_connectivity.py` - BLE connectivity troubleshooting
-- `custom_components/august_local/` - Integration (enrollment disabled)
-- `custom_components/august_local/enrollment.py` - Enrollment code (ready to test)
-
-## Notes
-
-- Integration is functional for existing locks (no enrollment needed)
-- Enrollment is production-ready code but needs real hardware test
-- Connection timeout issue is environmental (lock offline), not code issue
-- Once lock responds, can proceed with full integration test
-
-**Proceed with Phase 1 (existing features) while troubleshooting lock connectivity.**
+Factory-reset credential testing remains a separate, destructive experiment requiring explicit approval and a recovery path. The baseline/post-reset procedure is in [BOOTSTRAP_ENROLLMENT.md](BOOTSTRAP_ENROLLMENT.md). Do not enable the experimental enrollment code to perform it.

@@ -1,86 +1,75 @@
-# August Local Keypad - Complete Setup Guide
+# August Local Keypad — Setup Guide
 
-## What This Integration Does
+## What this integration does
 
-**August Local Keypad** adds complete PIN/keypad management, auto-lock control, and location-based auto-unlock to Home Assistant for **factory-reset August ASL-05 locks** — with **zero cloud contact after setup**.
+**August Local Keypad** adds PIN/keypad management, auto-lock control, and location-based auto-unlock to Home Assistant for August ASL-05 locks that already have an offline Bluetooth key installed through an August account.
 
-Features:
-- ✅ **Factory-reset enrollment** - Set up a blank lock entirely via Bluetooth, no August app needed
-- ✅ **PIN management** - Add/change/delete codes directly from HA, per-user access control
-- ✅ **Auto-lock** - Timer-based automatic locking (stored on the lock, works offline)
-- ✅ **Auto-unlock** - Location + Bluetooth beacon proximity-based arrival unlock
-- ✅ **Keypad pairing** - Pair/unpair August Smart Keypads
-- ✅ **Multi-user** - Non-admin HA users manage only their own PINs
+Features available:
+- **Key import** — import a lock's installed offline BLE key from an existing August account and validate it locally
+- **PIN management** — add/change/delete codes directly from HA, per-user access control
+- **Auto-lock** — timer-based automatic locking (stored on the lock, works without HA running)
+- **Auto-unlock** — location + Bluetooth beacon proximity-based arrival unlock
+
+Not yet supported or verified:
+- Factory-reset enrollment (registering a new lock or installing a new offline credential)
+- Keypad pairing via HA
+- Calibration
+- PIN readback from the lock
 
 ## Prerequisites
 
-1. **Home Assistant** 2024.1 or later
+1. **Home Assistant** with the current August and Yale Access Bluetooth integrations; minimum-version compatibility is not verified
 2. **Bluetooth adapter** or **ESPHome Bluetooth proxy** within range of the lock
-3. **Factory-reset August ASL-05 lock** ready for enrollment (not previously paired to any August account)
+3. **August ASL-05 lock** already registered to an August account with an offline key installed
 4. **HACS** installed (for easy updates)
+5. An August account accessible from HA — either the [official August integration](https://www.home-assistant.io/integrations/august/) already loaded in HA, or credentials for direct sign-in
 
 ## Installation
 
 ### Via HACS (Recommended)
 
-1. Open Home Assistant → **Settings → Devices & Services → Integrations**
+1. Open **HACS** in Home Assistant
 2. Click **⋮ → Custom repositories**
 3. Add: `https://github.com/websterwh/august-local-hacs`
 4. Category: **Integration**
-5. Find **August Local Keypad** in HACS and install
+5. Find **August Local** in HACS and install
 6. Restart Home Assistant
 
 ### Manual Installation
 
 1. Download the latest release from GitHub
-2. Extract to `~/.homeassistant/custom_components/august_local_keypad/`
+2. Extract to `~/.homeassistant/custom_components/august_local/`
 3. Restart Home Assistant
 
 ## Setup
 
-### Option 1: Enroll a Factory-Reset Lock (Recommended)
+### Account-assisted wizard
 
-**This option requires a factory-reset lock with no previous August account.**
+If the official [HA August integration](https://www.home-assistant.io/integrations/august/) is already loaded:
 
-1. Factory-reset your lock:
-   - Hold the physical reset button on the lock for 30+ seconds
-   - Watch for LED to flash, then stop flashing (wait for silence)
-   - Keep holding another 10 seconds to ensure factory-reset mode is active
+1. **Settings → Devices & Services → Add Integration** → search **August Local**
+2. The account-source form opens automatically
+3. Choose a loaded August account entry, or **Sign in to another August account**
+4. Select the lock registered to that account
+5. Confirm BLE key validation — the wizard connects to the lock locally and validates its installed key without moving the deadbolt
+6. Setup completes; Door PINs panel appears in the sidebar
 
-2. In Home Assistant: **Settings → Devices & Services → Add Integration**
+No password is entered or stored by this integration; the OAuth session is held by the official August integration.
 
-3. Search for **August Local Keypad** and select **Enroll a Factory-Reset Lock**
+### Direct sign-in
 
-4. Enter your lock's **Bluetooth MAC address** (e.g., `78:9C:85:33:F8:34`)
-   - Find it by scanning nearby BLE devices in Home Assistant's Bluetooth settings, or
-   - Check the lock's label, or
-   - Use a BLE scanner app on your phone
+If no official August integration is loaded in HA:
 
-5. The integration will:
-   - Discover the lock
-   - Trigger enrollment mode
-   - Capture enrollment nonces from BLE advertisements
-   - Derive a secure session key
-   - Generate and write an offline key to the lock
-   - Complete setup
+1. **Settings → Devices & Services → Add Integration** → search **August Local**
+2. The sign-in form opens automatically (or choose **Sign in to another August account** when a loaded account is available)
+3. Enter your August email or phone number and password
+4. Enter the verification code sent by August
+5. Select the lock registered to your account
+6. Confirm BLE key validation (no motor movement)
 
-6. When done, the lock is ready to use — **no cloud account needed**
+Your password and account token are used only during this setup wizard and are not stored by this integration. Direct sign-in previously returned HTTP 403 on this installation; current success is not established. If it fails, add the official HA August integration and return to the wizard.
 
-### Option 2: Use an Existing Yale Access Bluetooth Entry
-
-If you already have the **Yale Access Bluetooth** integration set up with a lock:
-
-1. Add Integration → **August Local Keypad** → **Use an Existing Bluetooth Lock**
-2. Select the lock from your existing Yale Access Bluetooth entries
-3. Done — the lock key is imported automatically
-
-### Option 3: Import from August Account (Rare)
-
-If you have an August account already synced with this lock in Home Assistant:
-
-1. Add Integration → **August Local Keypad** → **Use August Account**
-2. Select your August account and then the specific lock
-3. The key is imported; cloud is no longer used for that lock
+Existing Yale Access Bluetooth entries are reused for the selected lock through the same validated account path. For an existing Door PINs installation, use **Configure → Reconnect account and Bluetooth key**. Selecting another lock is rejected before Bluetooth validation.
 
 ## Usage
 
@@ -89,7 +78,6 @@ If you have an August account already synced with this lock in Home Assistant:
 Open Home Assistant sidebar → **Door PINs** to:
 - Create new access codes (you own the slot)
 - Assign codes to specific HA users
-- Set expiration dates and schedules
 - Delete codes
 - Read/set the lock's native auto-lock timer
 - Configure arrival-based auto-unlock
@@ -98,71 +86,77 @@ Open Home Assistant sidebar → **Door PINs** to:
 
 1. Ensure **HA Companion app** is installed on your phone
 2. Go to **Door PINs** panel → **Arrival Unlock**
-3. Configure:
-   - **Proximity threshold** (Bluetooth beacon range)
-   - **Home entity** (zone where you live)
-   - Enable/disable for specific users
-4. Automations are created automatically; you can customize them
+3. Configure proximity threshold and home entity
+4. Enable/disable per user
+5. Automations are created automatically; you can customize them
 
-### Manual Commands
+### Service calls
 
-Service calls available:
-- `august_local_keypad.program` - Add/change a PIN
-- `august_local_keypad.delete` - Delete a PIN
-- `august_local_keypad.status` - Check lock status
+Service domain: `august_local`
 
-See **Services** in Home Assistant for full details.
+- `august_local.program` — add or change a PIN in an owned slot
+- `august_local.insert` — insert a PIN into a freshly reserved slot
+- `august_local.delete` — delete a PIN
+- `august_local.status` — check lock status
 
-## Troubleshooting
-
-### Enrollment Fails ("Lock not found")
-
-- **Lock not in factory-reset mode**: Hold button another 10-30 seconds, lock should accept BLE writes
-- **Too far away**: Move lock closer to Bluetooth adapter
-- **Bluetooth adapter disabled**: Check Home Assistant Bluetooth integration is running
-- **Lock has a key installed**: Factory-reset again (harder/longer button press)
-
-### "Invalid MAC address"
-
-Format must be `XX:XX:XX:XX:XX:XX` (6 pairs of hex digits separated by colons)
-
-### PIN operations fail ("outcome unknown")
-
-- Normal if lock goes offline mid-operation (timeouts are safe)
-- Retry the operation — the lock will reject duplicate writes if the slot is already set
-- Check HA logs for exact error
-
-### Auto-unlock not working
-
-- Companion app must be running with Bluetooth enabled
-- Check that your home zone is correctly configured in HA
-- Verify BLE beacon proximity is within range
-- Check automations in Home Assistant were created correctly
+See the action developer tool in Home Assistant and `custom_components/august_local/services.yaml` for parameter details.
 
 ## Architecture
 
 This integration:
 - Operates on top of **Yale Access Bluetooth** (`yalexs_ble`) for BLE transport
-- Never contacts August cloud servers for day-to-day operation
-- Stores the offline key locally in HA (encrypted in config)
-- Uses real Yale/August BLE protocol (reverse-engineered from captured traffic)
-- Manages PINs via legacy ASL-05 commands (0x28, 0x2B, 0x2C opcodes)
+- Uses an August account once during setup to import the lock's installed offline key
+- Stores the validated BLE key and slot via `yalexs_ble` in HA config
+- Does not contact August cloud for day-to-day PIN or auto-lock operations
+- Uses the August BLE protocol for PIN commands
 - Never logs PIN contents or decrypted BLE frames
 
-## Security Notes
+**Note:** Local BLE control does not guarantee the lock's WiFi module never contacts August's cloud. The official August integration may independently refresh its OAuth session and contact August's servers.
 
-- **Offline key**: Stored in Home Assistant configuration (protected by HA security)
-- **PINs**: Never logged, traced, or exposed to HA entity states/recorder/automations
-- **PIN slots**: Non-admin users can only manage PINs in their assigned slots
-- **Admin users**: Can manage all slots and settings
-- **Factory-reset**: Erases all keys and settings on the lock
+## Security notes
 
-## Known Limitations
+- **Offline key**: stored by `yalexs_ble` in Home Assistant configuration — protect HA config secrets
+- **PINs**: never logged, traced, or exposed to HA entity states/recorder/automations
+- **PIN slots**: non-admin users can only manage PINs in their assigned slots
+- **Admin users**: can manage all slots and settings
+- **August password/token**: used only during the setup wizard; not stored by Door PINs
 
-- **PIN readback**: ASL-05 firmware 1.1.30 does not support reading existing PINs — only codes written by this integration are tracked
-- **Keypad pairing**: Requires the lock to already have the physical August Smart Keypad installed
-- **Factory-reset only**: Only works with locks that have never been enrolled to an August account (or after factory-reset)
-- **One integration per lock**: Only one HA instance can control a given lock key
+## Known limitations
+
+- **Factory-reset locks**: registering a new lock or installing a new offline credential is not yet supported; use the August app to provision the lock first
+- **Keypad pairing**: requires the August Smart Keypad to already be paired via the official app; HA-side pairing is not implemented
+- **PIN readback**: reliable enumeration is not established for the tested ASL-05 firmware — only imported or locally managed records are tracked
+- **One instance per HA**: only one Door PINs entry per HA instance
+- **BLE key rotation**: if `yalexs_ble` prompts for re-authentication, re-run the account wizard (Configure → Reconnect account and Bluetooth key); see [upstream guidance](https://www.home-assistant.io/integrations/yalexs_ble/#lock-frequently-requires-re-authentication)
+
+## Troubleshooting
+
+### Direct sign-in rejected
+
+Add the official [HA August integration](https://www.home-assistant.io/integrations/august/) (Settings → Add Integration → August), finish sign-in, then return to Door PINs setup. Account errors are separate from Bluetooth errors; repeated retries can trigger rate limits.
+
+### "No offline key"
+
+The selected lock has no installed offline key available to this account. The lock must be registered and have its offline key provisioned via the August app before it can be imported here.
+
+### BLE key validation fails
+
+- Keep the Bluetooth proxy near the lock
+- Close the August app on any nearby phone (it may hold the BLE connection)
+- Retry; if it persists, the lock's offline key may need refreshing via the August app
+
+### PIN operations fail ("outcome unknown")
+
+- A timeout does not prove whether a write was applied; do not retry blindly
+- Inspect the recorded failure stage and the manager's needs-attention state before any separately authorized recovery
+- Check HA logs for the failure stage name and exception type
+
+### Auto-unlock not working
+
+- Companion app must be running with Bluetooth enabled
+- Check that your home zone is correctly configured in HA
+- Verify the BLE proxy is within range
+- Check that automations were created in Home Assistant
 
 ## Support
 
