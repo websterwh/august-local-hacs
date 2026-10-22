@@ -9,7 +9,7 @@ A Home Assistant custom integration that adds local PIN/keypad management, lock-
 - Imports a lock's already-installed Bluetooth offline key via the official HA August integration's OAuth session.
 - Validates the imported key against the physical lock over BLE without moving the deadbolt.
 - Configures Yale Access Bluetooth (`yalexs_ble`) for local BLE control and adds the Door PINs panel.
-- Adds/changes/deletes PINs on explicitly owned or reserved keypad slots over the local BLE connection.
+- Discovers PIN capacity using acknowledged local occupancy reads, with one slot per HA user or a chosen total, plus manually added PINs. Unknown slots are never allocated.
 - Per-user PIN self-service: non-admin HA users manage only PINs assigned to them; admins manage all.
 - Reads/writes the lock's native auto-lock timer (stored on the lock, works without HA running).
 - Passive Bluetooth-beacon "near door" detection plus a generated arrival-unlock automation using HA Companion app / BLE beacon proximity — not location alone.
@@ -21,7 +21,8 @@ A Home Assistant custom integration that adds local PIN/keypad management, lock-
 
 - **No factory enrollment.** Factory-reset locks require an August account to receive an initial offline key. The wizard imports an already-provisioned key but cannot register a new lock or install a new offline credential. See [BOOTSTRAP_ENROLLMENT.md](docs/BOOTSTRAP_ENROLLMENT.md).
 - **No keypad pairing.** The physical August Smart Keypad must already be paired to the lock through the official app. HA-only keypad pairing is unimplemented and unverified.
-- **No PIN readback from the lock.** PIN contents cannot be reliably enumerated from tested ASL-05 firmware. The integration retains PINs it wrote, in its own local storage — it never assumes an unreserved slot is empty and never guesses a PIN.
+- **Discovery depends on firmware support.** Slot reads are not verified on this installation. Unsupported reads/timeouts stop provisioning; cloud-list omissions and old range reservations are not proof of empty slots.
+- **Scheduled PINs are not implemented.** Day/time restrictions remain in the August app. Local replacement of a restricted imported PIN is blocked rather than changing it to unrestricted access.
 - **No guaranteed cloud-free operation.** Local BLE control reduces cloud dependence but does not prevent the lock's own WiFi or the official August integration from contacting August servers.
 
 ## Requirements
@@ -45,12 +46,12 @@ No password is entered or stored by August Local. Account errors point you back 
 
 ## Using it
 
-Open **Door PINs** in the HA sidebar to manage PINs through the panel: reserve a slot range dedicated to HA, create/assign/delete PINs, read/set the auto-lock timer, and configure arrival-based auto-unlock. Service calls (`august_local.program`, `august_local.insert`, `august_local.delete`, `august_local.status`) are also available for automations — see `services.yaml`.
+Open **Door PINs** and choose **Provision PIN capacity**, then **Add PIN**. A programming acknowledgement is not a physical keypad acceptance test. **Arrival unlock** now groups phone-proximity calibration and the arrival automation; generated automations remain disabled until explicitly enabled. Auto-lock remains separate. Service calls (`august_local.program`, `august_local.insert`, `august_local.delete`, `august_local.status`) remain available — see `services.yaml`.
 
 ## Safety notes
 
 - Programming an **owned** slot clears it with its current PIN before setting a new one; a failure partway through can leave that slot empty — this is a lock-firmware limitation, not a bug to "fix" by retrying blindly.
-- **Insert** (used for freshly reserved, never-before-used slots) never sends a clear command, and the lock accepts inserts into occupied slots too — only use it on a range you've confirmed is unused.
+- **Insert** rechecks occupancy immediately before writing and stops unless the lock positively reports empty. The protocol can otherwise accept an occupied slot; it must never be used as a write-based occupancy probe.
 - The integration never logs PIN values, offline keys, or raw decrypted BLE frames; failures report only a stage name and exception type.
 
 ## Documentation

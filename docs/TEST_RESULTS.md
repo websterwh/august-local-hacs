@@ -30,7 +30,17 @@ python -m unittest discover -s tests -p 'test_setup_regressions.py' -v
 
 Coverage includes the no-account guidance and retry path, loaded-account selection and stale-selection rejection, borrowing a refreshed official-session token on every discovery call, discovery of an installed owner key, cleanup without closing the shared session, sanitized account failures, rejection of a different lock before Bluetooth access, invalid-key rejection, sequential key fallback, and separation of transport failures from invalid keys. Ruff passed for `account.py` and `config_flow.py`; the isolated environment's dependency check passed.
 
-Live HA inspection found no configured official August account, so actual OAuth login/refresh and physical key validation were not acceptance-tested. The user must complete sign-in through the official August integration. No account was created or changed, and no lock operation was sent.
+At the time of the 0.10.7 verification, live HA inspection found no configured official August account, so actual OAuth login/refresh and physical key validation were not acceptance-tested.
+
+### 0.10.8 PIN capacity and arrival changes
+
+Passed: 14 manager tests, 8 occupancy tests and the existing 32 setup tests (**54 Python tests**), plus `node tests/test_panel.js` and JavaScript syntax checking. Focused fatal-error/undefined-name Ruff checks passed for the modified Python integration files; this is not a claim of project-wide lint cleanliness. The isolated dependency check passed. No hardware suite was run.
+
+The focused suites cover automatic per-user assignment, total-capacity growth, manual extra PINs, migration of metadata-only ranges, duplicate/unknown occupancy, occupied slots, rejection recovery, interrupted writes, ownership protection and prevention of imported-schedule widening. Read-only occupancy tests validate slot echo, result code and credential-field parsing; timeouts never mean empty. The Node UI checks cover capacity-mode submissions, unified arrival navigation and the disabled-by-default, fresh-proximity arrival condition. These are synthetic tests, not a physical keypad acceptance test.
+
+Live read-only storage inspection found one HA-created record marked active and nine metadata-only reservations. That old active flag represented a command acknowledgement, not proof the keypad accepted the PIN. The cause of the reported physical PIN failure remains unresolved. Direct read-only cloud diagnostics returned HTTP 403 and the supervisor core proxy returned HTTP 401; no reliable remote occupancy inventory was obtained. No test PIN was written because no unused physical slot was verified. No PIN was cleared, ownership changed or motor operation sent.
+
+Weekly/day/time native scheduling was not established. The panel reports that limitation, rejects schedule payloads instead of silently programming unrestricted access, and blocks replacing restricted imported codes locally. A working auto-lock operation does not establish keypad pairing, PIN validity or schedule enforcement.
 
 Do not run the hardware component suite as a default regression gate: it contains experimental Bluetooth writes. See [LOCAL_TESTING.md](LOCAL_TESTING.md).
 

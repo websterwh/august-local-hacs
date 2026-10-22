@@ -15,11 +15,11 @@ After a factory reset, old PIN records/reserved ranges may no longer describe th
 ## Local features
 
 - Lock/unlock, status, and battery through Yale Access Bluetooth.
-- Create/change/delete PINs in known owned or explicitly reserved slots.
+- Discover empty PIN slots automatically, reserve one per active HA user or a chosen total capacity, and create additional manually entered PINs. A failed occupancy read blocks allocation.
 - HA users manage their own PINs; administrators manage all records.
 - Lock-native auto-lock delay and HA arrival-unlock setup with Companion location plus phone BLE proximity.
 
-PIN contents cannot be reliably enumerated from tested ASL-05 firmware 1.1.30. The integration retains managed PINs privately and never assumes an unreserved slot is empty. Local PIN edits need not appear in August's cloud/app.
+Slot read support is not yet verified on this ASL-05 installation. Discovery only accepts successfully echoed slot responses; a timeout is unknown, never empty. The integration retains managed PINs privately. Writes are labelled programmed/unverified until the physical keypad is tested. Local PIN edits need not appear in August's cloud/app. Day/time schedules are not implemented; restricted imported codes cannot be replaced locally with always-access codes.
 
 ## Commissioning research
 

@@ -1,7 +1,7 @@
 {
   "domain": "august_local",
   "name": "August Local",
-  "version": "0.10.7",
+  "version": "0.10.8",
   "after_dependencies": ["august"],
   "dependencies": [
     "yalexs_ble",

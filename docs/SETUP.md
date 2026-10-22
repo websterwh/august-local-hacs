@@ -62,6 +62,14 @@ Update August Local to 0.10.7 or newer in HACS and restart Home Assistant to loa
 
 ## Usage
 
+### Automatic PIN slots
+
+Use **Provision PIN capacity** instead of choosing slot numbers. Automatic mode reserves one slot per active personal HA user; count mode requests a total capacity for additional manually created PINs. Provisioning reads local slot occupancy and allocates only slots the lock positively reports empty. It does not create PINs, clear existing codes or use cloud-list omissions as evidence that a slot is free. An unsupported read or timeout stops discovery rather than trying writes against unknown slots. Existing HA-created PINs remain recorded; old unchecked range reservations are not evidence of empty slots.
+
+Use **Add PIN** to enter a code after capacity has been discovered. The lock's command acknowledgement is shown as **programmed, unverified**, not proof that the physical keypad accepts it. Confirm keypad pairing and test the code physically only when unlocking is safe. A working auto-lock setting does not verify keypad programming.
+
+Capacity requests expand or reuse the existing HA allocation; requesting a smaller number does not delete PINs or take slots away from other users. Provisioning assigns slots, not generated PIN values. Firmware support must be confirmed on the actual lock; there is no fallback that guesses free slots.
+
 ### Door PINs Panel
 
 Open Home Assistant sidebar → **Door PINs** to:
@@ -75,16 +83,16 @@ Open Home Assistant sidebar → **Door PINs** to:
 
 1. Ensure **HA Companion app** is installed on your phone
 2. Go to **Door PINs** panel → **Arrival Unlock**
-3. Configure proximity threshold and home entity
-4. Enable/disable per user
-5. Automations are created automatically; you can customize them
+3. Use **1. Phone proximity** to configure and test the door receiver and threshold
+4. Use **2. Arrival automation** to select the home entity and fresh nearby-phone sensor
+5. Create the automation, review it, and explicitly enable it. New automations start disabled
 
 ### Service calls
 
 Service domain: `august_local`
 
 - `august_local.program` — add or change a PIN in an owned slot
-- `august_local.insert` — insert a PIN into a freshly reserved slot
+- `august_local.insert` — recheck an owned slot is empty before inserting a PIN
 - `august_local.delete` — delete a PIN
 - `august_local.status` — check lock status
 
@@ -115,6 +123,7 @@ This integration:
 - **Factory-reset locks**: registering a new lock or installing a new offline credential is not yet supported; use the August app to provision the lock first
 - **Keypad pairing**: requires the August Smart Keypad to already be paired via the official app; HA-side pairing is not implemented
 - **PIN readback**: reliable enumeration is not established for the tested ASL-05 firmware — only imported or locally managed records are tracked
+- **PIN schedules**: day/time enforcement is not implemented. Use the August app; HA timer-based deletion/reinsertion is not a safe substitute when HA or Bluetooth is offline. Restricted imported PINs cannot be locally replaced with always-access codes
 - **One instance per HA**: only one Door PINs entry per HA instance
 - **BLE key rotation**: if `yalexs_ble` prompts for re-authentication, re-run the account wizard (Configure → Reconnect account and Bluetooth key); see [upstream guidance](https://www.home-assistant.io/integrations/yalexs_ble/#lock-frequently-requires-re-authentication)
 

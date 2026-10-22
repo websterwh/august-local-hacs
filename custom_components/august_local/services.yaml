@@ -42,8 +42,8 @@ delete:
         text:
 
 insert:
-  name: Insert PIN in reserved local slot
-  description: Program an explicitly reserved unused slot without clearing it. This cannot detect occupancy; occupied slots may accept another code. Prefer the Door PINs manager UI.
+  name: Insert PIN in verified empty local slot
+  description: Recheck occupancy and program an owned slot without clearing it only if the lock positively reports empty. Unsupported reads, occupied slots and timeouts block insertion. Prefer the Door PINs manager UI.
   fields:
     slot:
       required: true
