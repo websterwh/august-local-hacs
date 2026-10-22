@@ -66,7 +66,7 @@ class AugustPinManager extends HTMLElement {
   }
   async run(action,data,success){
     if(this.busy)return;
-    const label=['create','program','delete','provision'].includes(action)?'Waiting for Bluetooth… This can take over a minute. Do not submit again.':'Working…';
+    const label=['create','program','delete','provision','recover'].includes(action)?'Waiting for Bluetooth… This can take over a minute. Do not submit again.':'Working…';
     this.setBusy(true,label);this.message(label);
     try{
       let result,failure;
@@ -78,7 +78,7 @@ class AugustPinManager extends HTMLElement {
         return;
       }
       if(!refreshed){this.message('Request completed, but PIN status could not be refreshed. Do not repeat the write; refresh status after checking the connection.');return;}
-      this.message(['create','program'].includes(action)?'Programming acknowledged. Keypad acceptance is unverified; check pairing and physically test only when unlocking is safe.':success||'Completed.');
+      this.message(['create','program','recover'].includes(action)?'Programming acknowledged. Keypad acceptance is unverified; check pairing and physically test only when unlocking is safe.':success||'Completed.');
       return result;
     }finally{this.setBusy(false);}
   }
@@ -95,10 +95,38 @@ class AugustPinManager extends HTMLElement {
     const records=this.model.records.filter(r=>r.has_pin || !['reserved','cleared'].includes(r.status));
     if(records.some(record=>record.status==='needs_attention'||record.status==='pending'))root.querySelector('#editor').before(this.element('p','Needs recovery means a previous PIN operation was not confirmed. It does not prove the PIN is absent or invalid. Retained values are kept for recovery; do not repeatedly delete and re-add the code.',{className:'note'}));
     for(const record of records){const row=document.createElement('tr');row.append(this.element('td',String(record.slot)),this.element('td',record.name||''));const owner=this.model.users.find(u=>u.id===record.owner_id);row.append(this.element('td',owner?.name || (record.owner_id?'Assigned account':'Admin only')));const pinCell=this.element('td',record.has_pin?'••••••':'None',{className:'mask'});if(record.has_pin){const box=this.button('••••••',async()=>{if(box.dataset.shown){box.textContent='••••••';delete box.dataset.shown;return;}try{const r=await this.api('reveal',{slot:record.slot});box.textContent=r.pin;box.dataset.shown='1';setTimeout(()=>{box.textContent='••••••';delete box.dataset.shown;},10000);}catch(e){this.message('PIN unavailable.');}},pinCell);box.className='pin-box';box.setAttribute('aria-label','Show or hide PIN');pinCell.firstChild.remove();}row.append(pinCell);row.append(this.element('td',({active:'Active',imported:'Active',needs_attention:'Needs recovery',programming:'Saving',deleting:'Deleting'})[record.status]||record.status));const actions=this.element('td','',{className:'actions'});this.button(record.has_pin?'Change PIN':'Set PIN',()=>this.edit(record),actions);if(record.has_pin){this.button('Delete',()=>{if(confirm(`Delete the keypad PIN in slot ${record.slot}? The door will not be operated.`))this.run('delete',{slot:record.slot},`Slot ${record.slot} deleted. Confirm that the keypad rejects the old PIN.`);},actions);}if(this.model.admin)this.button('Assign / rename',()=>this.assign(record),actions);row.append(actions);Array.from(row.children).forEach((cell,i)=>cell.setAttribute('data-label',['Slot','Name','HA account','PIN','Status','Actions'][i]));root.querySelector('tbody').append(row);}
-    root.querySelector('#empty').textContent=records.length?'':'No PINs yet. An administrator must discover PIN capacity first, then use Add PIN.';
+    root.querySelector('#empty').textContent=records.length?'':'Use Add PIN to reuse an acknowledged HA-cleared slot. New unknown slots require verified capacity. For an old blocked record, use Restore known HA slot with its last known code.';
+    for(const record of records.filter(r=>r.source==='local'&&r.has_pin&&['needs_attention','pending'].includes(r.status)))this.button(`Recover / replace slot ${record.slot}`,()=>this.recoverPin(record),tools);
+    if(this.model.admin)for(const record of this.model.records.filter(r=>r.source==='local_discovered'&&r.status==='reserved'&&!r.has_pin&&!r.verified_empty))this.button(`Restore known HA slot ${record.slot}`,()=>this.recoverPin(record),tools);
 
   }
   edit(record){const host=this.shadowRoot.querySelector('#editor');host.replaceChildren();const form=this.element('form','',{className:'card'});form.append(this.element('h2',record?`Set PIN · slot ${record.slot}`:'Add PIN'),this.element('p',record?.has_pin?'Enter 4–6 digits. This replaces the current code.':'Enter 4–6 digits to set a new PIN.'));const name=this.element('input',null,{type:'text',maxLength:80,value:'',placeholder:'e.g. Guest or cleaner'});if(!record){name.setAttribute('aria-label','PIN name');const l=this.element('label','Name');l.append(name);form.append(l);}const first=this.element('input',null,{type:'password',inputMode:'numeric',minLength:4,maxLength:6,required:true,autocomplete:'new-password'});first.setAttribute('aria-label','New PIN');const second=this.element('input',null,{type:'password',inputMode:'numeric',minLength:4,maxLength:6,required:true,autocomplete:'new-password'});second.setAttribute('aria-label','Confirm new PIN');for(const [label,input] of [['New PIN',first],['Confirm new PIN',second]]){const l=this.element('label',label);l.append(input);form.append(l);}const b=this.element('button','Save PIN',{type:'submit'});form.append(b);form.onsubmit=async e=>{e.preventDefault();if(first.value!==second.value){this.message('The PINs do not match.');return;}if(!/^[0-9]{4,6}$/.test(first.value)){this.message('Enter 4–6 ASCII digits.');return;}const pin=first.value;const label=name.value;first.value='';second.value='';host.replaceChildren();await this.run(record?'program':'create',record?{slot:record.slot,pin}:{pin,name:label},'PIN saved.');};this.button('Cancel',()=>host.replaceChildren(),form).type='button';host.append(form);first.focus();}
+  recoverPin(record){
+    const host=this.shadowRoot.querySelector('#editor');host.replaceChildren();
+    const form=this.element('form','',{className:'card'});
+    form.append(this.element('h3',`Recover HA slot ${record.slot}`),this.element('p','Clear only the retained HA-created PIN candidates in this slot, then set a replacement. Each clear must be acknowledged before programming continues. This does not discover other slots or move the deadbolt. Keep this slot exclusive to HA.'));
+    const pin=this.element('input',null,{type:'password',inputMode:'numeric',minLength:4,maxLength:6,required:true,autocomplete:'new-password'});
+    const repeat=this.element('input',null,{type:'password',inputMode:'numeric',minLength:4,maxLength:6,required:true,autocomplete:'new-password'});
+    const confirmClear=this.element('input',null,{type:'checkbox',required:true});
+    let previous;
+    if(!record.has_pin){
+      previous=this.element('input',null,{type:'password',inputMode:'numeric',minLength:4,maxLength:6,required:true,autocomplete:'off'});
+      previous.setAttribute('aria-label','Last known HA PIN');const label=this.element('label','Last known HA PIN');label.append(previous);form.append(label);
+      form.append(this.element('p','The old failed preflight no longer retains a PIN for this slot. Only restore it if it was dedicated to HA and you know its last code. The supplied code must be successfully cleared before a replacement is sent. This is not automatic occupancy discovery.'));
+    }
+    for(const [text,input]of[['Replacement PIN',pin],['Confirm replacement PIN',repeat],['Clear retained HA-created codes in this slot',confirmClear]]){const label=this.element('label',text);input.setAttribute('aria-label',text);label.append(input);form.append(label);}
+    form.append(this.element('button','Recover and replace PIN',{type:'submit'}));
+    form.onsubmit=async event=>{
+      event.preventDefault();
+      if(!confirmClear.checked){this.message('Confirm clearing the retained HA-created codes first.');return;}
+      if(!/^[0-9]{4,6}$/.test(pin.value)||pin.value!==repeat.value){this.message('Enter matching PINs of 4–6 ASCII digits.');return;}
+      if(previous&&!/^[0-9]{4,6}$/.test(previous.value)){this.message('Enter the last known HA-created PIN for this slot.');return;}
+      const value=pin.value;pin.value='';repeat.value='';
+      const oldValue=previous?.value;if(previous)previous.value='';
+      await this.run('recover',{slot:record.slot,pin:value,confirmed_clear:true,...(previous?{previous_pin:oldValue}:{})});
+    };
+    this.button('Cancel',()=>host.replaceChildren(),form).type='button';host.append(form);pin.focus();
+  }
   async autoLock(forceRead=false){
     if(this.busy)return;
     if(!forceRead&&this._autoLockVisibleGen===this._autoLockGen&&this._autoLockForm?.parentNode)return;
@@ -180,4 +208,4 @@ class AugustPinManager extends HTMLElement {
   }
   assign(record){const host=this.shadowRoot.querySelector('#editor');host.replaceChildren();const form=this.element('form','',{className:'card'});form.append(this.element('h2',`Assign / rename · slot ${record.slot}`));const name=this.element('input',null,{value:record.name||'',maxLength:80});name.setAttribute('aria-label','PIN label');const select=this.element('select',null);select.setAttribute('aria-label','HA account');select.append(this.element('option','Admin only',{value:''}));for(const user of this.model.users)select.append(this.element('option',user.name,{value:user.id}));select.value=record.owner_id||'';for(const [label,input]of[['PIN label',name],['HA account',select]]){const l=this.element('label',label);l.append(input);form.append(l);}form.append(this.element('p','Assignment grants that account access to reveal, change, and delete this slot’s code. Other slots stay private.'));form.append(this.element('button','Save assignment',{type:'submit'}));form.onsubmit=e=>{e.preventDefault();const target=select.options[select.selectedIndex].textContent;if(confirm(`Grant ${target} management of slot ${record.slot}?`))this.run('assign',{slot:record.slot,name:name.value,owner_id:select.value},'Assignment saved.');};this.button('Cancel',()=>host.replaceChildren(),form).type='button';host.append(form);form.scrollIntoView({behavior:'smooth',block:'nearest'});}
 }
-customElements.define('august-pin-manager-v23',AugustPinManager);
+customElements.define('august-pin-manager-v24',AugustPinManager);

@@ -120,10 +120,10 @@ async def setup_panel(hass, entry):
         await panel_custom.async_register_panel(
             hass,
             frontend_url_path="august-local-keypad",
-            webcomponent_name="august-pin-manager-v23",
+            webcomponent_name="august-pin-manager-v24",
             sidebar_title="Door PINs",
             sidebar_icon="mdi:dialpad",
-            module_url="/august-local-keypad/panel.js?v=23",
+            module_url="/august-local-keypad/panel.js?v=24",
         )
         hass.data[DOMAIN]["panel_registered"] = True
 
@@ -287,6 +287,15 @@ class ManagerView(HomeAssistantView):
             slot = data.get("slot")
             if type(slot) is not int or not 1 <= slot <= 255:
                 raise ManagerError("Invalid slot")
+            if action == "recover":
+                if data.get("confirmed_clear") is not True:
+                    raise ManagerError(
+                        "Confirm clearing retained HA-created codes in this slot before recovery"
+                    )
+                await manager.recover(
+                    user, slot, data.get("pin"), data.get("previous_pin")
+                )
+                return self.json({"ok": True, "slot": slot})
             if action == "assign":
                 manager.admin(user)
                 owner = data.get("owner_id") or None

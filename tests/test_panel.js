@@ -207,6 +207,37 @@ async function main() {
     assert.equal(ui.busy,false);
     assert.equal(hosts['#settings-editor'].children.length,0);
   }
+  {
+    const [ui,hosts]=panel();let request;
+    ui.run=async(action,data)=>{request={action,data};};
+    ui.recoverPin({slot:2,has_pin:true});
+    const form=hosts['#editor'].children[0];
+    const inputs=form.descendants().filter(e=>e.tag==='input');
+    inputs[0].value='1234';inputs[1].value='1234';
+    await form.onsubmit({preventDefault(){}});
+    assert.equal(request,undefined,'recovery must be explicitly confirmed');
+    inputs[2].checked=true;inputs[1].value='5678';
+    await form.onsubmit({preventDefault(){}});
+    assert.equal(request,undefined,'mismatched replacement PINs must not be sent');
+    inputs[1].value='1234';
+    await form.onsubmit({preventDefault(){}});
+    assert.equal(request.action,'recover');assert.equal(request.data.slot,2);
+    assert.equal(request.data.confirmed_clear,true);assert.equal(request.data.pin,'1234');
+    assert.equal(inputs[0].value,'');assert.equal(inputs[1].value,'');
+  }
+  {
+    const [ui,hosts]=panel();let request;
+    ui.run=async(action,data)=>{request={action,data};};
+    ui.recoverPin({slot:1,has_pin:false});
+    const form=hosts['#editor'].children[0];const inputs=form.descendants().filter(e=>e.tag==='input');
+    inputs[1].value='5678';inputs[2].value='5678';inputs[3].checked=true;
+    await form.onsubmit({preventDefault(){}});
+    assert.equal(request,undefined,'blocked legacy restoration needs the last known PIN');
+    inputs[0].value='1234';await form.onsubmit({preventDefault(){}});
+    assert.equal(request.action,'recover');assert.equal(request.data.previous_pin,'1234');
+    assert.equal(request.data.pin,'5678');assert.equal(request.data.slot,1);
+    assert.equal(inputs[0].value,'');
+  }
   console.log('Capacity controls, unified arrival navigation and fail-closed arrival automation passed');
   console.log('Loading indicator, duplicate-submit guard, control restoration and refresh-failure feedback passed');
   console.log('autoLock immediate shell, dedup, gen guard, failure retry, arrivalSettings dedup passed');

@@ -60,6 +60,16 @@ Auto-lock renders before the device read, uses HA card/loading components, keeps
 
 Regression coverage uses the actual upstream disconnect exception with mocked transport. No existing recovery record was cleared, no physical PIN acceptance was established and no lock setting or motor operation was sent during this update.
 
+### 0.10.11 known-slot PIN regression repair
+
+The original insert service did not require opcode 0x39. Version 0.10.8 introduced an unconditional occupancy probe even after an acknowledged HA deletion; the later preflight handler also replaced the cleared record with an unverified reservation. This blocked the original delete/re-add workflow independently of whether the new automatic-discovery feature worked. Known-PIN replacement continues to use the original protocol transaction without discovery.
+
+Confirmed-cleared HA slots now authorize a one-use insertion proof bound to the same pending PIN and slot. The proof is persisted as consumed before programming and discarded on restart. Newly discovered/unknown slots and direct insert calls without a proof still require the occupancy read. Explicit recovery clears retained HA candidates in one existing slot, then inserts only after all clears succeed. Old blocked records without retained candidates require an administrator's last known HA-created PIN and explicit clear confirmation; no slot is silently assumed empty.
+
+Passed: 29 manager/adapter tests, 12 occupancy/insertion tests, 2 auto-lock tests and 32 setup tests (**75 Python tests**), plus Node frontend and JavaScript syntax checks. Coverage includes confirmed delete/re-add with occupancy forced to fail, proof consumption before insertion, stale-proof rejection, original known-code replacement, recovery ordering, unsuccessful clear blocking replacement, ownership checks and explicit last-known-code restoration.
+
+Read-only live inspection found the affected slot as an unverified reservation with no retained code. No live registry values were edited and no PIN, setting or motor operation was sent. This release repairs the demonstrated software regression; physical keypad acceptance and automatic discovery on this lock remain unverified. Never turn missing inventory responses into free slots.
+
 Do not run the hardware component suite as a default regression gate: it contains experimental Bluetooth writes. See [LOCAL_TESTING.md](LOCAL_TESTING.md).
 
 Factory-reset survival of existing BLE keys and cloud-token validity are separate, untested questions. Reset, ownership removal, revocation and account deletion are not interchangeable tests. The future explicitly approved experiment is documented in [BOOTSTRAP_ENROLLMENT.md](BOOTSTRAP_ENROLLMENT.md).

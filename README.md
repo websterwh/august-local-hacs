@@ -48,10 +48,12 @@ No password is entered or stored by August Local. Account errors point you back 
 
 Open **Door PINs** and choose **Provision PIN capacity**, then **Add PIN**. A programming acknowledgement is not a physical keypad acceptance test. **Arrival unlock** now groups phone-proximity calibration and the arrival automation; generated automations remain disabled until explicitly enabled. Auto-lock remains separate. Service calls (`august_local.program`, `august_local.insert`, `august_local.delete`, `august_local.status`) remain available — see `services.yaml`.
 
+Existing HA-managed PINs do not require automatic discovery to change. After an acknowledged HA deletion, **Add PIN** can reuse that same exclusively HA-managed slot without a slot-read probe. An uncertain record offers **Recover / replace**; an old blocked record whose candidate was discarded offers admin-only **Restore known HA slot**, requiring its last known HA PIN. Recovery clears only the specified known candidates, and stops unless every clear is acknowledged. It never discovers or erases unknown codes.
+
 ## Safety notes
 
 - Programming an **owned** slot clears it with its current PIN before setting a new one; a failure partway through can leave that slot empty — this is a lock-firmware limitation, not a bug to "fix" by retrying blindly.
-- **Insert** rechecks occupancy immediately before writing and stops unless the lock positively reports empty. The protocol can otherwise accept an occupied slot; it must never be used as a write-based occupancy probe.
+- **Insert** requires a fresh occupancy read unless the manager supplies a one-use proof of an acknowledged HA clear for that same slot/candidate. Keep HA-managed slots exclusive to HA. The protocol can otherwise accept an occupied slot; it must never be used as a write-based occupancy probe.
 - The integration never logs PIN values, offline keys, or raw decrypted BLE frames; failures report only a stage name and exception type.
 
 ## Documentation

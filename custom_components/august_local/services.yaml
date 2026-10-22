@@ -43,7 +43,7 @@ delete:
 
 insert:
   name: Insert PIN in verified empty local slot
-  description: Recheck occupancy and program an owned slot without clearing it only if the lock positively reports empty. Unsupported reads, occupied slots and timeouts block insertion. Prefer the Door PINs manager UI.
+  description: Program an owned slot using a fresh empty-slot read, or a one-use manager proof that HA acknowledged clearing that same slot. Direct calls cannot request a probe bypass. Unknown occupancy blocks insertion. Prefer the Door PINs manager UI.
   fields:
     slot:
       required: true

@@ -7,8 +7,7 @@ from pathlib import Path
 import time
 
 import voluptuous as vol
-from bleak.exc import BleakError
-from yalexs_ble.session import DisconnectedError
+
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
@@ -168,29 +167,17 @@ async def _setup(hass, settings, ui_entry=None):
                     if call.service == "program":
                         await keypad.program(slot, pin, replacing_pin=previous)
                     elif call.service == "insert":
-                        from .inventory import slot_occupied
+                        from .inventory import insert_owned_pin, InsertionBlocked
 
+                        manager = (
+                            hass.data.get(DOMAIN, {}).get("manager")
+                            if ui_entry
+                            else None
+                        )
                         try:
-                            occupied = await asyncio.wait_for(
-                                slot_occupied(lock, slot), 10
-                            )
-                        except (
-                            TimeoutError,
-                            ValueError,
-                            RuntimeError,
-                            TypeError,
-                            AttributeError,
-                            BleakError,
-                            DisconnectedError,
-                        ):
-                            raise KeypadFailure(
-                                "Slot occupancy could not be confirmed; no PIN insertion sent"
-                            ) from None
-                        if occupied:
-                            raise KeypadFailure(
-                                "Slot is occupied; no PIN insertion sent"
-                            )
-                        await keypad.insert(slot, pin)
+                            await insert_owned_pin(lock, keypad, slot, pin, manager)
+                        except InsertionBlocked as exc:
+                            raise KeypadFailure(str(exc)) from None
                     elif call.service == "delete":
                         await keypad.delete(slot, current_pin=pin)
                     if call.service != "status":

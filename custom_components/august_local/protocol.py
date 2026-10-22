@@ -66,7 +66,7 @@ class ASL05Keypad:
             await self._send(0x2C, encoded, slot)
 
     async def insert(self, slot, pin):
-        """Insert into an explicitly reserved empty slot; never send CLEAR.
+        """Insert into a verified empty or acknowledged HA-cleared slot; no CLEAR.
 
         ASL-05 accepts commits to occupied slots too. The caller must reserve
         a known-unused range; this command is not an occupancy probe.

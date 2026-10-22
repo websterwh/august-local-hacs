@@ -6,6 +6,33 @@ from bleak.exc import BleakError
 from yalexs_ble.session import DisconnectedError
 
 
+class InsertionBlocked(ValueError):
+    """No PIN-changing command was sent."""
+
+
+async def insert_owned_pin(lock, keypad, slot, pin, manager=None):
+    """Use a confirmed HA clear, otherwise require a positive occupancy read."""
+    cleared = manager is not None and await manager.consume_clearance(slot, pin)
+    if not cleared:
+        try:
+            occupied = await asyncio.wait_for(slot_occupied(lock, slot), 10)
+        except (
+            BleakError,
+            DisconnectedError,
+            TimeoutError,
+            ValueError,
+            RuntimeError,
+            TypeError,
+            AttributeError,
+        ):
+            raise InsertionBlocked(
+                "Slot occupancy could not be confirmed; no PIN insertion sent"
+            ) from None
+        if occupied:
+            raise InsertionBlocked("Slot is occupied; no PIN insertion sent")
+    await keypad.insert(slot, pin)
+
+
 async def slot_occupied(lock, slot):
     """Read the echoed legacy slot and classify its BCD field privately."""
     session = lock.session

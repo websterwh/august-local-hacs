@@ -26,6 +26,8 @@ class PinManager:
         self.lock = asyncio.Lock()
         # Historical range reservations were only metadata, never occupancy proof.
         for key, record in list(state["records"].items()):
+            # A restarted process must not reuse authorization for an interrupted write.
+            record.pop("cleared_before_insert", None)
             if (
                 record.get("source") == "local_reserved"
                 and record.get("status") == "reserved"
@@ -73,7 +75,10 @@ class PinManager:
                 k: r.get(k)
                 for k in ("slot", "name", "owner_id", "source", "status", "access_type")
             }
-            | {"has_pin": bool(r.get("pin") or r.get("pending_pin"))}
+            | {
+                "has_pin": bool(r.get("pin") or r.get("pending_pin")),
+                "verified_empty": r.get("verified_empty") is True,
+            }
             for r in self.state["records"].values()
             if self.visible(user, r)
         ]
@@ -244,6 +249,81 @@ class PinManager:
         async with self.lock:
             await self._mutate(user, slot, operation, pin)
 
+    async def consume_clearance(self, slot, pin):
+        """Consume a confirmed-clear proof inside the serialized BLE operation.
+
+        The manager mutation already holds its lock; acquiring it again here
+        would deadlock. Persist consumption before any PIN command is sent.
+        """
+        record = self.state["records"].get(str(slot))
+        if not (
+            record
+            and record.get("source") == "local"
+            and record.get("status") == "pending"
+            and record.get("pending_pin") == pin
+            and record.get("cleared_before_insert") is True
+        ):
+            return False
+        record.pop("cleared_before_insert")
+        await self.save(copy.deepcopy(self.state))
+        return True
+
+    async def recover(self, user, slot, pin, previous_pin=None):
+        """Explicitly clear retained HA candidates, then reprogram that same slot."""
+        if not isinstance(pin, str) or not re.fullmatch(r"[0-9]{4,6}", pin):
+            raise ManagerError("Enter four to six ASCII digits")
+        async with self.lock:
+            record = self.record(user, slot)
+            restoring = (
+                record.get("source") == "local_discovered"
+                and record.get("status") == "reserved"
+                and not record.get("verified_empty")
+                and not record.get("pin")
+                and not record.get("pending_pin")
+            )
+            if restoring:
+                self.admin(user)
+                if not isinstance(previous_pin, str) or not re.fullmatch(
+                    r"[0-9]{4,6}", previous_pin
+                ):
+                    raise ManagerError(
+                        "Enter the last known HA-created PIN for this slot; its previous value is no longer retained"
+                    )
+            if not restoring and (
+                record.get("source") != "local"
+                or record.get("status") not in ("needs_attention", "pending")
+                or not (record.get("pin") or record.get("pending_pin"))
+            ):
+                raise ManagerError(
+                    "Recovery requires retained credentials for an uncertain HA-managed slot"
+                )
+            if any(
+                other is not record
+                and pin in (other.get("pin"), other.get("pending_pin"))
+                for other in self.state["records"].values()
+            ):
+                raise ManagerError(
+                    "That PIN is already managed; choose a different PIN"
+                )
+            owner, name = record.get("owner_id"), record.get("name")
+            if restoring:
+                if any(
+                    other is not record
+                    and previous_pin in (other.get("pin"), other.get("pending_pin"))
+                    for other in self.state["records"].values()
+                ):
+                    raise ManagerError(
+                        "That previous PIN belongs to another managed slot; no recovery command sent"
+                    )
+                record.update(
+                    source="local", status="needs_attention", pin=previous_pin
+                )
+                await self.save(copy.deepcopy(self.state))
+            await self._mutate(user, slot, "delete")
+            record.update(owner_id=owner, name=name)
+            await self.save(copy.deepcopy(self.state))
+            await self._mutate(user, slot, "program", pin)
+
     async def _mutate(self, user, slot, operation, pin=None):
         r = self.record(user, slot)
         if operation not in ("program", "delete"):
@@ -269,6 +349,7 @@ class PinManager:
         ):
             raise ManagerError("Enter four to six ASCII digits")
         insert = operation == "program" and self.reusable(r)
+        cleared = insert and r.get("status") == "cleared" and r.get("source") == "local"
         current = r.get("pending_pin") or r.get("pin")
         if operation == "program" and not current and not insert:
             raise ManagerError(
@@ -285,6 +366,9 @@ class PinManager:
                     "That PIN is already managed; choose a different PIN"
                 )
             r["pending_pin"] = pin
+        r.pop("cleared_before_insert", None)
+        if cleared:
+            r["cleared_before_insert"] = True
         r.pop("verified_empty", None)
         r["status"] = "pending"
         await self.save(copy.deepcopy(self.state))
@@ -303,6 +387,7 @@ class PinManager:
             if not insert:
                 raise
             r.pop("pending_pin", None)
+            r.pop("cleared_before_insert", None)
             r.update(status="reserved", source="local_discovered")
             await self.save(copy.deepcopy(self.state))
             raise ManagerError(
@@ -312,6 +397,7 @@ class PinManager:
             if not insert:
                 raise
             r.pop("pending_pin", None)
+            r.pop("cleared_before_insert", None)
             # Rejection is not a fresh occupancy read. Require discovery again.
             r.update(status="reserved", source="local_discovered")
             await self.save(copy.deepcopy(self.state))
@@ -319,6 +405,7 @@ class PinManager:
                 "Lock rejected this new code. No working PIN was confirmed; review occupancy and keypad pairing."
             ) from None
         except Exception as exc:
+            r.pop("cleared_before_insert", None)
             r["status"] = "needs_attention"
             await self.save(copy.deepcopy(self.state))
             # Exception from the adapter is already secret-free, but do not
@@ -342,6 +429,7 @@ class PinManager:
                 name=f"Available slot {slot}",
             )
         r.pop("pending_pin", None)
+        r.pop("cleared_before_insert", None)
         await self.save(copy.deepcopy(self.state))
 
     async def import_codes(self, user, codes):

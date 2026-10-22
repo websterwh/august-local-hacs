@@ -70,6 +70,14 @@ Use **Add PIN** to enter a code after capacity has been discovered. The lock's c
 
 Capacity requests expand or reuse the existing HA allocation; requesting a smaller number does not delete PINs or take slots away from other users. Provisioning assigns slots, not generated PIN values. Firmware support must be confirmed on the actual lock; there is no fallback that guesses free slots.
 
+### Existing HA slot: change, re-add or recover
+
+Changing a retained PIN uses the original known-PIN clear/set/schedule/commit transaction, not automatic discovery. After an acknowledged deletion, **Add PIN** can reuse that same HA-managed slot without the unsupported occupancy read. Keep the slot exclusive to HA; do not separately reuse it in the August app. The clear proof is consumed and saved before insertion, and an interrupted insertion cannot reuse it after a restart.
+
+For **Needs recovery**, use **Recover / replace slot** and explicitly confirm clearing its retained HA-created candidates. Enter a replacement PIN. Only that slot's retained candidates are cleared; every clear must succeed before insertion. Unknown, imported and other users' slots cannot use this recovery route.
+
+Older failed preflight handling may have discarded the candidate and left an unverified reservation. An administrator can use **Restore known HA slot** for that existing record, enter its last known HA-created PIN and a replacement, and confirm that this slot was dedicated to HA. This is an explicit known-code operation, not a claim that the slot is empty. If the known-code clear is rejected or unconfirmed, recovery stops and sends no replacement. Without the last known code, there is no safe automatic restoration of lost evidence.
+
 ### Door PINs Panel
 
 Open Home Assistant sidebar → **Door PINs** to:

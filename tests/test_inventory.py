@@ -91,6 +91,35 @@ class InventoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["complete"])
         self.assertTrue(all(r["state"] == "occupied" for r in result["slots"]))
 
+    async def test_insertion_without_clear_proof_still_checks_occupancy(self):
+        keypad = SimpleNamespace(insert=AsyncMock())
+        manager = SimpleNamespace(consume_clearance=AsyncMock(return_value=False))
+        with patch.object(
+            inventory, "slot_occupied", AsyncMock(side_effect=TimeoutError())
+        ) as probe:
+            with self.assertRaises(inventory.InsertionBlocked):
+                await inventory.insert_owned_pin(object(), keypad, 2, "1234", manager)
+        probe.assert_awaited_once()
+        keypad.insert.assert_not_awaited()
+
+    async def test_direct_service_without_manager_cannot_skip_occupied_slot(self):
+        keypad = SimpleNamespace(insert=AsyncMock())
+        with patch.object(inventory, "slot_occupied", AsyncMock(return_value=True)):
+            with self.assertRaises(inventory.InsertionBlocked):
+                await inventory.insert_owned_pin(object(), keypad, 2, "1234")
+        keypad.insert.assert_not_awaited()
+
+    async def test_failure_persisting_proof_prevents_insertion(self):
+        keypad = SimpleNamespace(insert=AsyncMock())
+        manager = SimpleNamespace(
+            consume_clearance=AsyncMock(side_effect=OSError("store unavailable"))
+        )
+        with patch.object(inventory, "slot_occupied", AsyncMock()) as probe:
+            with self.assertRaises(OSError):
+                await inventory.insert_owned_pin(object(), keypad, 2, "1234", manager)
+        keypad.insert.assert_not_awaited()
+        probe.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()

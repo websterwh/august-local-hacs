@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 import re
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from bleak.exc import BleakError
 from yalexs_ble.session import DisconnectedError
 
@@ -253,6 +253,216 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(module.ManagerError):
             await m.provision(person("admin", True), [person("one"), person("two")])
         self.assertEqual(m.state["records"], {})
+        operate.assert_not_awaited()
+
+    async def test_delete_then_readd_known_slot_does_not_use_occupancy_read(self):
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "custom_components/august_local/inventory.py"
+        )
+        inventory_spec = importlib.util.spec_from_file_location(
+            "known_clear_inventory", path
+        )
+        inventory = importlib.util.module_from_spec(inventory_spec)
+        inventory_spec.loader.exec_module(inventory)
+        m, save, operate, _ = self.manager(
+            {
+                "2": {
+                    "slot": 2,
+                    "source": "local",
+                    "status": "programmed_unverified",
+                    "pin": "1234",
+                    "owner_id": "admin",
+                }
+            }
+        )
+        keypad = SimpleNamespace(insert=AsyncMock())
+
+        async def insert(slot, pin):
+            self.assertNotIn("cleared_before_insert", m.state["records"][str(slot)])
+            self.assertNotIn(
+                "cleared_before_insert", save.await_args.args[0]["records"][str(slot)]
+            )
+
+        keypad.insert.side_effect = insert
+
+        async def operation(action, slot, pin, previous):
+            if action == "insert":
+                await inventory.insert_owned_pin(object(), keypad, slot, pin, m)
+
+        operate.side_effect = operation
+        admin = person("admin", True)
+        await m.mutate(admin, 2, "delete")
+        self.assertEqual(m.state["records"]["2"]["status"], "cleared")
+        with patch.object(
+            inventory, "slot_occupied", AsyncMock(side_effect=TimeoutError())
+        ) as probe:
+            slot = await m.create(admin, "5678")
+            probe.assert_not_awaited()
+        self.assertEqual(slot, 2)
+        keypad.insert.assert_awaited_once_with(2, "5678")
+        self.assertEqual(m.state["records"]["2"]["pin"], "5678")
+        self.assertFalse(await m.consume_clearance(2, "5678"))
+
+    async def test_recovery_clears_only_retained_candidates_then_inserts_same_slot(
+        self,
+    ):
+        m, _, operate, discover = self.manager(
+            {
+                "2": {
+                    "slot": 2,
+                    "source": "local",
+                    "status": "needs_attention",
+                    "pin": "1234",
+                    "pending_pin": "5678",
+                    "owner_id": "user",
+                    "name": "My code",
+                }
+            }
+        )
+        await m.recover(person("user"), 2, "9012")
+        self.assertEqual(
+            [call.args for call in operate.await_args_list],
+            [
+                ("delete", 2, "1234", "1234"),
+                ("delete", 2, "5678", "5678"),
+                ("insert", 2, "9012", "9012"),
+            ],
+        )
+        record = m.state["records"]["2"]
+        self.assertEqual(record["pin"], "9012")
+        self.assertEqual(record["owner_id"], "user")
+        self.assertEqual(record["name"], "My code")
+        self.assertNotIn("pending_pin", record)
+        self.assertNotIn("cleared_before_insert", record)
+        discover.assert_not_awaited()
+
+    async def test_recovery_stops_at_first_unconfirmed_clear(self):
+        m, _, operate, _ = self.manager(
+            {
+                "2": {
+                    "slot": 2,
+                    "source": "local",
+                    "status": "needs_attention",
+                    "pending_pin": "5678",
+                    "owner_id": "admin",
+                }
+            }
+        )
+        operate.side_effect = TimeoutError()
+        with self.assertRaises(module.ManagerError):
+            await m.recover(person("admin", True), 2, "9012")
+        operate.assert_awaited_once_with("delete", 2, "5678", "5678")
+        self.assertEqual(m.state["records"]["2"]["pending_pin"], "5678")
+        self.assertEqual(m.state["records"]["2"]["status"], "needs_attention")
+        self.assertNotIn("cleared_before_insert", m.state["records"]["2"])
+
+    async def test_recovery_cannot_clear_unknown_imported_or_other_users_slot(self):
+        for source, owner in [("august_import", "user"), ("local", "someone_else")]:
+            m, _, operate, _ = self.manager(
+                {
+                    "2": {
+                        "slot": 2,
+                        "source": source,
+                        "status": "needs_attention",
+                        "pending_pin": "5678",
+                        "owner_id": owner,
+                    }
+                }
+            )
+            with self.assertRaises(module.ManagerError):
+                await m.recover(person("user"), 2, "9012")
+            operate.assert_not_awaited()
+
+    async def test_restart_discards_stale_clearance_without_discarding_candidate(self):
+        m, _, _, _ = self.manager(
+            {
+                "2": {
+                    "slot": 2,
+                    "source": "local",
+                    "status": "pending",
+                    "pending_pin": "5678",
+                    "cleared_before_insert": True,
+                }
+            }
+        )
+        self.assertFalse(await m.consume_clearance(2, "5678"))
+        self.assertEqual(m.state["records"]["2"]["pending_pin"], "5678")
+
+    async def test_clearance_requires_matching_slot_candidate_and_source(self):
+        m, save, _, _ = self.manager()
+        m.state["records"]["2"] = {
+            "slot": 2,
+            "source": "local",
+            "status": "pending",
+            "pending_pin": "5678",
+            "cleared_before_insert": True,
+        }
+        self.assertFalse(await m.consume_clearance(2, "1234"))
+        self.assertFalse(await m.consume_clearance(3, "5678"))
+        m.state["records"]["2"]["source"] = "local_discovered"
+        self.assertFalse(await m.consume_clearance(2, "5678"))
+        save.assert_not_awaited()
+
+    async def test_change_known_pin_keeps_original_program_transaction(self):
+        m, _, operate, discover = self.manager(
+            {
+                "2": {
+                    "slot": 2,
+                    "source": "local",
+                    "status": "programmed_unverified",
+                    "pin": "1234",
+                    "owner_id": "user",
+                }
+            }
+        )
+        await m.mutate(person("user"), 2, "program", "5678")
+        operate.assert_awaited_once_with("program", 2, "5678", "1234")
+        discover.assert_not_awaited()
+
+    async def test_old_blocked_record_requires_admin_and_last_known_pin(self):
+        record = {
+            "slot": 2,
+            "source": "local_discovered",
+            "status": "reserved",
+            "owner_id": "user",
+        }
+        m, _, operate, _ = self.manager({"2": record})
+        with self.assertRaises(module.ManagerError):
+            await m.recover(person("user"), 2, "5678", "1234")
+        with self.assertRaises(module.ManagerError):
+            await m.recover(person("admin", True), 2, "5678")
+        operate.assert_not_awaited()
+        self.assertEqual(m.state["records"]["2"], record)
+        await m.recover(person("admin", True), 2, "5678", "1234")
+        self.assertEqual(
+            [call.args for call in operate.await_args_list],
+            [("delete", 2, "1234", "1234"), ("insert", 2, "5678", "5678")],
+        )
+        self.assertEqual(m.state["records"]["2"]["owner_id"], "user")
+
+    async def test_restore_does_not_clear_code_known_to_another_slot(self):
+        m, _, operate, _ = self.manager(
+            {
+                "2": {"slot": 2, "source": "local_discovered", "status": "reserved"},
+                "3": {
+                    "slot": 3,
+                    "source": "local",
+                    "status": "programmed_unverified",
+                    "pin": "1234",
+                },
+            }
+        )
+        with self.assertRaises(module.ManagerError):
+            await m.recover(person("admin", True), 2, "5678", "1234")
+        operate.assert_not_awaited()
+
+    async def test_verified_reservation_cannot_be_restored_using_supplied_old_code(
+        self,
+    ):
+        m, _, operate, _ = self.manager({"2": empty(2)})
+        with self.assertRaises(module.ManagerError):
+            await m.recover(person("admin", True), 2, "5678", "1234")
         operate.assert_not_awaited()
 
 
