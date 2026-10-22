@@ -50,6 +50,16 @@ The manager/adapter tests distinguish the two fixed "no PIN insertion sent" pref
 
 Read-only HA storage inspection found a needs-attention record with a pending candidate but no confirmed PIN. Its underlying failure stage cannot be reconstructed from that record alone; no candidate was discarded or lock operation sent. Hardware PIN acceptance and recovery remain unverified.
 
+### 0.10.10 disconnection and settings responsiveness
+
+Passed: 19 manager/adapter tests, 9 occupancy tests, 2 auto-lock lifecycle tests and 32 setup tests (**62 Python tests**), plus JavaScript syntax and Node frontend checks. Deferred frontend reads cover immediate rendering, duplicate-click suppression, close/switch invalidation, reusing a pending read after reopening, retry after failure and returning to arrival settings. These are mock-DOM checks, not live HA visual/browser acceptance tests.
+
+The upstream `DisconnectedError` derives from the Yale BLE error base, not `BleakError` or `RuntimeError`. Previous occupancy handlers missed it. Read-only discovery now classifies it as unknown occupancy, and a disconnect during initial discovery connection returns an actionable no-write error while releasing the operation lock. A pre-insertion occupancy disconnect reports that insertion did not start. An auto-lock read error no longer suggests a setting save may have occurred.
+
+Auto-lock renders before the device read, uses HA card/loading components, keeps Close available while reading and disables Save until a successful read. The panel is still a custom HA panel; this is not a complete migration to HA's built-in settings interface. Saves are never automatically retried and duplicate submissions are blocked while a save is in progress.
+
+Regression coverage uses the actual upstream disconnect exception with mocked transport. No existing recovery record was cleared, no physical PIN acceptance was established and no lock setting or motor operation was sent during this update.
+
 Do not run the hardware component suite as a default regression gate: it contains experimental Bluetooth writes. See [LOCAL_TESTING.md](LOCAL_TESTING.md).
 
 Factory-reset survival of existing BLE keys and cloud-token validity are separate, untested questions. Reset, ownership removal, revocation and account deletion are not interchangeable tests. The future explicitly approved experiment is documented in [BOOTSTRAP_ENROLLMENT.md](BOOTSTRAP_ENROLLMENT.md).

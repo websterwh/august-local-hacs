@@ -62,6 +62,17 @@ class InventoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["complete"])
         read.assert_awaited_once()
 
+    async def test_upstream_disconnect_is_unknown_not_empty_or_internal_error(self):
+        with patch.object(
+            inventory,
+            "slot_occupied",
+            AsyncMock(side_effect=inventory.DisconnectedError()),
+        ) as read:
+            result = await inventory.discover_slots(object(), 2)
+        self.assertEqual(result["slots"], [{"slot": 1, "state": "unknown"}])
+        self.assertFalse(result["complete"])
+        read.assert_awaited_once()
+
     async def test_limit_counts_only_positive_empty_reads(self):
         with patch.object(
             inventory,

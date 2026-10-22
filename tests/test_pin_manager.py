@@ -2,12 +2,17 @@
 
 import copy
 import ast
+import asyncio
+from contextlib import nullcontext
+import time
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
 import re
 from unittest.mock import AsyncMock, Mock
+from bleak.exc import BleakError
+from yalexs_ble.session import DisconnectedError
 
 spec = importlib.util.spec_from_file_location(
     "pin_manager_test",
@@ -317,6 +322,62 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         operate, _ = self.adapter("Opcode 2c: TimeoutError; outcome unknown")
         with self.assertRaises(RuntimeError):
             await operate("insert", 2, "1234", "1234")
+
+    async def test_discovery_connect_disconnect_releases_lock_and_sends_no_write(self):
+        tree = ast.parse(
+            (
+                Path(__file__).resolve().parents[1]
+                / "custom_components/august_local/panel.py"
+            ).read_text()
+        )
+        setup = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "setup_panel"
+        )
+        discover = next(
+            node
+            for node in setup.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "discover"
+        )
+        discover.body = [
+            node for node in discover.body if not isinstance(node, ast.ImportFrom)
+        ]
+        push = SimpleNamespace(
+            _running=True,
+            _operation_lock=asyncio.Lock(),
+            _ensure_connected=AsyncMock(side_effect=DisconnectedError()),
+            _cancel_future_update=Mock(),
+            _complete_operation=Mock(),
+        )
+        ble = SimpleNamespace(
+            domain="yalexs_ble", runtime_data=SimpleNamespace(lock=push)
+        )
+        read = AsyncMock()
+        namespace = {
+            "entry": SimpleNamespace(data={"entry_id": "test"}),
+            "hass": SimpleNamespace(
+                config_entries=SimpleNamespace(async_get_entry=Mock(return_value=ble))
+            ),
+            "asyncio": asyncio,
+            "time": time,
+            "_private_protocol_logs": nullcontext,
+            "discover_slots": read,
+            "ManagerError": module.ManagerError,
+            "DisconnectedError": DisconnectedError,
+            "BleakError": BleakError,
+        }
+        exec(
+            compile(
+                ast.Module(body=[discover], type_ignores=[]), "discovery_test", "exec"
+            ),
+            namespace,
+        )
+        with self.assertRaisesRegex(module.ManagerError, "No PIN write was sent"):
+            await namespace["discover"](2)
+        self.assertFalse(push._operation_lock.locked())
+        read.assert_not_awaited()
+        push._cancel_future_update.assert_not_called()
 
 
 if __name__ == "__main__":

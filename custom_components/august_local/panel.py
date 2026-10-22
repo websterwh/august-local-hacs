@@ -5,6 +5,8 @@ from pathlib import Path
 import re
 import time
 import traceback
+from bleak.exc import BleakError
+from yalexs_ble.session import DisconnectedError
 from homeassistant.components import panel_custom, frontend, bluetooth
 from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.helpers.storage import Store
@@ -93,6 +95,10 @@ async def setup_panel(hass, entry):
                     return await discover_slots(lock, limit)
                 finally:
                     push._complete_operation(time.monotonic())
+        except (DisconnectedError, BleakError, TimeoutError):
+            raise ManagerError(
+                "Bluetooth disconnected or timed out during read-only slot discovery. No PIN write was sent. Close other lock apps and check the proxy connection before trying discovery again."
+            ) from None
         finally:
             push._operation_lock.release()
 
@@ -114,10 +120,10 @@ async def setup_panel(hass, entry):
         await panel_custom.async_register_panel(
             hass,
             frontend_url_path="august-local-keypad",
-            webcomponent_name="august-pin-manager-v22",
+            webcomponent_name="august-pin-manager-v23",
             sidebar_title="Door PINs",
             sidebar_icon="mdi:dialpad",
-            module_url="/august-local-keypad/panel.js?v=22",
+            module_url="/august-local-keypad/panel.js?v=23",
         )
         hass.data[DOMAIN]["panel_registered"] = True
 

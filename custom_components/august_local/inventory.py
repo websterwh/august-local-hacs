@@ -3,6 +3,7 @@
 import asyncio
 
 from bleak.exc import BleakError
+from yalexs_ble.session import DisconnectedError
 
 
 async def slot_occupied(lock, slot):
@@ -46,6 +47,7 @@ async def discover_slots(lock, limit, *, maximum_slot=255):
             occupied = await asyncio.wait_for(slot_occupied(lock, slot), 10)
         except (
             BleakError,
+            DisconnectedError,
             TimeoutError,
             ValueError,
             RuntimeError,

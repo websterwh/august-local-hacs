@@ -145,6 +145,7 @@ The selected lock has no installed offline key available to this account. The lo
 
 ### PIN operations fail ("outcome unknown")
 
+- **Disconnected during discovery:** a Bluetooth disconnect while reading occupancy is unknown, not an empty slot. Version 0.10.10 handles the upstream `DisconnectedError` explicitly instead of returning an internal filename/line error. Discovery sends no PIN-changing command; keep unknown slots unavailable
 - During a request, the panel shows a spinner, marks itself busy and disables PIN controls. Bluetooth can take over a minute. Do not submit the operation again or treat a slow response as proof of failure
 - In 0.10.9, a known occupancy preflight block reports that no new PIN was sent rather than labelling it as an uncertain write. Occupancy must still be verified before another insertion
 - **Needs recovery** means the operation's outcome is unconfirmed, not that the PIN is definitely invalid. Previously uncertain records and retained PIN values are not automatically cleared by an update
@@ -152,6 +153,11 @@ The selected lock has no installed offline key available to this account. The lo
 - A timeout does not prove whether a write was applied; do not retry blindly
 - Inspect the recorded failure stage and the manager's needs-attention state before any separately authorized recovery
 - Check HA logs for the failure stage name and exception type
+
+### Opening lock settings
+
+- Auto-lock settings open immediately in a Home Assistant card with a progress indicator while reading Bluetooth. Repeated clicks reuse the open editor and in-flight read; closing or switching settings prevents a late response from reopening an old menu
+- Arrival settings are local UI and open without a Bluetooth request. They remain separate from actually enabling automatic unlocking
 
 ### Auto-unlock not working
 

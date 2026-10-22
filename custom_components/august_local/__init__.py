@@ -8,6 +8,7 @@ import time
 
 import voluptuous as vol
 from bleak.exc import BleakError
+from yalexs_ble.session import DisconnectedError
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
@@ -180,6 +181,7 @@ async def _setup(hass, settings, ui_entry=None):
                             TypeError,
                             AttributeError,
                             BleakError,
+                            DisconnectedError,
                         ):
                             raise KeypadFailure(
                                 "Slot occupancy could not be confirmed; no PIN insertion sent"
