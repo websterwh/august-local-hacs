@@ -89,7 +89,8 @@ async def async_unload_entry(hass, entry):
         return False
     hass.data.get(DOMAIN, {}).pop("nearby_add", None)
     hass.data.get(DOMAIN, {}).pop("manager", None)
-    for service in ("status", "program", "insert", "delete"):
+    hass.data.get(DOMAIN, {}).pop("discover", None)
+    for service in ("status", "program", "insert", "delete", "clear_all_keypad"):
         hass.services.async_remove(DOMAIN, service)
     return True
 
@@ -130,7 +131,7 @@ async def _setup(hass, settings, ui_entry=None):
                 "Configured Yale Access Bluetooth entry is not loaded"
             )
         pin = previous = None
-        if call.service != "status":
+        if call.service not in ("status", "clear_all_keypad"):
             refs = (
                 dict(ui_entry.options.get("pins", {}))
                 if ui_entry
@@ -162,9 +163,24 @@ async def _setup(hass, settings, ui_entry=None):
                     push._cancel_future_update()
                     stage = "reading status before keypad command"
                     await asyncio.wait_for(lock.lock_status(), 15)
+                    if call.service == "clear_all_keypad":
+                        info = await asyncio.wait_for(lock.lock_info(), 15)
+                        if info.model != "ASL-05":
+                            raise HomeAssistantError(
+                                "HA-only initialization is restricted to ASL-05; no clear command sent"
+                            )
+                        manager = hass.data.get(DOMAIN, {}).get("manager")
+                        if manager is None or not await manager.consume_initialization(
+                            call.data["initialization_id"]
+                        ):
+                            raise HomeAssistantError(
+                                "No pending administrator-confirmed initialization; no clear command sent"
+                            )
                     stage = "sending keypad commands"
                     keypad = ASL05Keypad(lock)
-                    if call.service == "program":
+                    if call.service == "clear_all_keypad":
+                        await keypad.clear_all()
+                    elif call.service == "program":
                         await keypad.program(slot, pin, replacing_pin=previous)
                     elif call.service == "insert":
                         from .inventory import insert_owned_pin, InsertionBlocked
@@ -180,11 +196,13 @@ async def _setup(hass, settings, ui_entry=None):
                             raise KeypadFailure(str(exc)) from None
                     elif call.service == "delete":
                         await keypad.delete(slot, current_pin=pin)
-                    if call.service != "status":
+                    if call.service not in ("status", "clear_all_keypad"):
                         stage = "checking status after confirmed keypad command"
                         await asyncio.wait_for(lock.lock_status(), 15)
                 except KeypadFailure as exc:
                     raise HomeAssistantError(str(exc)) from None
+                except HomeAssistantError:
+                    raise
                 except Exception as exc:
                     raise HomeAssistantError(
                         f"Local keypad operation stopped while {stage}: {type(exc).__name__}; "
@@ -240,4 +258,12 @@ async def _setup(hass, settings, ui_entry=None):
         schema=vol.Schema(common),
         supports_response=SupportsResponse.OPTIONAL,
     )
+    if ui_entry:
+        hass.services.async_register(
+            DOMAIN,
+            "clear_all_keypad",
+            handle,
+            schema=vol.Schema({vol.Required("initialization_id"): cv.string}),
+            supports_response=SupportsResponse.OPTIONAL,
+        )
     return True

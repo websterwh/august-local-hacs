@@ -64,15 +64,31 @@ Update August Local to 0.10.7 or newer in HACS and restart Home Assistant to loa
 
 ### Automatic PIN slots
 
-Use **Provision PIN capacity** instead of choosing slot numbers. Automatic mode reserves one slot per active personal HA user; count mode requests a total capacity for additional manually created PINs. Provisioning reads local slot occupancy and allocates only slots the lock positively reports empty. It does not create PINs, clear existing codes or use cloud-list omissions as evidence that a slot is free. An unsupported read or timeout stops discovery rather than trying writes against unknown slots. Existing HA-created PINs remain recorded; old unchecked range reservations are not evidence of empty slots.
+Use **Provision PIN capacity** instead of choosing slot numbers. Automatic mode reserves one slot per active personal HA user; count mode requests a total capacity for additional manually created PINs. Provisioning reads local slot occupancy and allocates only slots the lock positively reports empty; the one exception is capacity growth following a successfully confirmed explicit global clear (initialized state, exclusive mode, consumed one-use authorization, initialized receipt), which allocates only slots with no existing HA record, preserves all existing, uncertain, and imported records, and issues no further clear or occupancy read. It does not create PINs, clear existing codes or use cloud-list omissions as evidence that a slot is free. An unsupported read or timeout stops discovery rather than trying writes against unknown slots. Existing HA-created PINs remain recorded; old unchecked range reservations are not evidence of empty slots.
 
 Use **Add PIN** to enter a code after capacity has been discovered. The lock's command acknowledgement is shown as **programmed, unverified**, not proof that the physical keypad accepts it. Confirm keypad pairing and test the code physically only when unlocking is safe. A working auto-lock setting does not verify keypad programming.
 
 Capacity requests expand or reuse the existing HA allocation; requesting a smaller number does not delete PINs or take slots away from other users. Provisioning assigns slots, not generated PIN values. Firmware support must be confirmed on the actual lock; there is no fallback that guesses free slots.
 
+### Read-only slot diagnostics
+
+In **Advanced PIN setup → Read slot occupancy**, enter a slot to inspect. This administrator-only check does not reserve it or write a test code. A successful status read precedes the occupancy command; after a failed occupancy read another status read checks whether the link still responds. Diagnostics retain only safe codes, response length, slot-echo validity, acknowledgement presence and opcode numbers—not PINs or decrypted frames. A timeout is not a statement about capacity or proof that firmware lacks the command.
+
+### HA-only initialization — last resort
+
+Prefer importing an existing August code or updating an existing HA-managed slot before using this option. **Advanced PIN setup → HA-only initialization (last resort)** erases every keypad code on this configured lock, including codes created outside HA. Keep an alternative way to enter. This is an experimental ASL-05-only command path. Physical testing on ASL-05 firmware 1.1.30 with keypad 2.27.0 confirmed: after explicitly authorized HA-only initialization, a previously registered code was rejected at the keypad and a newly programmed HA-managed code was accepted. Command acknowledgement alone is not physical evidence; this result applies only to that tested hardware and does not establish arbitrary unknown-slot discovery, support for other firmware versions, total hardware capacity, native schedules, or keypad commissioning.
+
+Select automatic capacity (one per active personal HA user) or a chosen total from 1–50, then type **ERASE ALL KEYPAD CODES**. This is a separate action, never an automatic response to failed discovery. No PINs are generated. Only a confirmed clear-all response prepares HA-cleared slots; use **Add PIN** afterwards and physically verify acceptance when safe. The chosen total is an HA allocation, not a measured hardware capacity.
+
+Initialization journals and consumes a one-use authorization before sending the command. Repeated submissions with the same operation ID do not issue another clear. An interrupted or unconfirmed attempt retains prior credentials as recovery evidence, invalidates empty-slot claims and does not automatically retry. Reopening and confirming another initialization is a new destructive decision, not recovery by guessing. Do not use the August app or another integration to write any keypad code on the lock afterwards — not merely the currently allocated range: future capacity growth depends on the entire cleared baseline remaining exclusive to HA. Reading the August account cloud inventory is not prohibited.
+
+This action does not factory-reset the lock, revoke keys, change ownership, unpair the keypad or move the deadbolt. It is not required to replace a retained, working HA PIN. The underlying guarded service cannot bypass the panel's manager authorization with a standalone call.
+
+Local clearing does not delete August's cloud PIN records. Official-app Bluetooth synchronization may restore those codes or reuse slots; avoid such synchronization after initialization. Read-only cloud API inventory does not itself write codes.
+
 ### Existing HA slot: change, re-add or recover
 
-Changing a retained PIN uses the original known-PIN clear/set/schedule/commit transaction, not automatic discovery. After an acknowledged deletion, **Add PIN** can reuse that same HA-managed slot without the unsupported occupancy read. Keep the slot exclusive to HA; do not separately reuse it in the August app. The clear proof is consumed and saved before insertion, and an interrupted insertion cannot reuse it after a restart.
+Changing a retained PIN uses the original known-PIN clear/set/schedule/commit transaction, not automatic discovery. After an acknowledged deletion, **Add PIN** can reuse that same HA-managed slot without relying on an occupancy read. Keep the slot exclusive to HA; do not separately reuse it in the August app. The clear proof is consumed and saved before insertion, and an interrupted insertion cannot reuse it after a restart.
 
 For **Needs recovery**, use **Recover / replace slot** and explicitly confirm clearing its retained HA-created candidates. Enter a replacement PIN. Only that slot's retained candidates are cleared; every clear must succeed before insertion. Unknown, imported and other users' slots cannot use this recovery route.
 
@@ -94,6 +110,12 @@ Open Home Assistant sidebar → **Door PINs** to:
 3. Use **1. Phone proximity** to configure and test the door receiver and threshold
 4. Use **2. Arrival automation** to select the home entity and fresh nearby-phone sensor
 5. Create the automation, review it, and explicitly enable it. New automations start disabled
+
+Arrival requires a transition from a known away state to home after the configured minimum time away. It does not unlock merely because a phone already at home approaches the receiver. The time away is measured between the actual state-transition timestamps, not when a delayed action happens to run. A newer eligible arrival replaces an older waiting run; a later short trip cannot reuse the previous arrival's authorization.
+
+The automation waits up to 30 minutes for matching door-proxy proximity. Detection requires three sufficiently strong samples spanning at least two seconds. Before unlocking it checks again that the same arrival is still current, proximity is on, the latest sample is less than ten seconds old and no earlier than arrival, and the lock is locked. Future timestamps, unavailable states and wait timeouts do not authorize unlocking. Calibrate the RSSI threshold with the phone actually by the door; do not lower it merely to force a test to pass. BLE beacons are not authenticated credentials, and location accuracy still matters.
+
+These guards apply to newly generated automations. Existing saved automations are not silently overwritten by an integration update; review and update their configuration separately. A controlled test with an isolated temporary tracker can verify arrival processing and the real Bluetooth/lock path without changing the phone's GPS, but cannot prove real location updates or background tracking. Keep physical unlock tests separately authorized and remove temporary test entities afterwards.
 
 ### Service calls
 
@@ -173,6 +195,9 @@ The selected lock has no installed offline key available to this account. The lo
 - Check that your home zone is correctly configured in HA
 - Verify the BLE proxy is within range
 - Check that automations were created in Home Assistant
+- Check that the arrival automation is enabled and the phone was actually away for the configured minimum time
+- Verify the near-door sensor turns on with fresh samples at the door; a transmitting phone can still be below the calibrated RSSI threshold
+- Do not use an automation's manual Run button as proof of arrival: it may skip trigger conditions or lack the required state-trigger context
 
 ## Support
 

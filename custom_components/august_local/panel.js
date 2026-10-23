@@ -14,13 +14,20 @@ function arrivalAutomation(source, lock, awaySeconds, nearby) {
   if(!/^(person|device_tracker)\.[a-z0-9_]+$/.test(source)||!/^lock\.[a-z0-9_]+$/.test(lock))throw new Error('Select a person or phone and the configured lock.');
   if(!Number.isInteger(awaySeconds)||awaySeconds<1||awaySeconds>65534)throw new Error('Choose a valid minimum time away.');
   if(!/^binary_sensor\.[a-z0-9_]+$/.test(nearby))throw new Error('Set up and select nearby phone detection first.');
+  const fromTs=`as_timestamp(trigger.from_state.last_changed, none)`;
+  const toTs=`as_timestamp(trigger.to_state.last_changed, none)`;
+  const trigOk=`trigger is defined and trigger is not none and trigger.from_state is defined and trigger.from_state is not none and trigger.to_state is defined and trigger.to_state is not none and trigger.from_state.state is defined and trigger.to_state.state is defined and trigger.from_state.last_changed is defined and trigger.to_state.last_changed is defined and ${fromTs} is not none and ${toTs} is not none`;
+  const sameArrival=`is_state('${source}', 'home') and as_timestamp(states['${source}'].last_changed, none) == ${toTs}`;
+  const lastSeen=`as_timestamp(state_attr('${nearby}', 'last_seen'), none)`;
+  const nearbyFresh=`is_state('${nearby}', 'on') and ${lastSeen} is not none and (as_timestamp(now()) - ${lastSeen}) >= 0 and (as_timestamp(now()) - ${lastSeen}) < 10 and ${lastSeen} >= ${toTs}`;
   return {
     alias:'Door PINs: unlock when arriving near the door',
     description:'Created by Door PINs. Unlocks on a valid return home after the minimum time away. Review location accuracy before enabling.',
     initial_state:false,
     triggers:[{trigger:'state',entity_id:source,to:'home'}],
-    conditions:[{condition:'template',value_template:`{{ trigger.from_state is not none and trigger.from_state.state not in ['home', 'unknown', 'unavailable'] and (as_timestamp(now()) - as_timestamp(trigger.from_state.last_changed)) >= ${awaySeconds} }}`},{condition:'state',entity_id:lock,state:'locked'}],
-    actions:[{wait_template:`{{ is_state('${nearby}', 'on') and (as_timestamp(now()) - as_timestamp(state_attr('${nearby}', 'last_seen'), 0)) < 10 and as_timestamp(state_attr('${nearby}', 'last_seen'), 0) >= as_timestamp(trigger.to_state.last_changed) }}`,timeout:'00:30:00',continue_on_timeout:false},{condition:'state',entity_id:source,state:'home'},{condition:'state',entity_id:lock,state:'locked'},{action:'lock.unlock',target:{entity_id:lock}}],mode:'single'
+    conditions:[{condition:'template',value_template:`{{ ${trigOk} and trigger.from_state.state not in ['home', 'unknown', 'unavailable'] and trigger.to_state.state == 'home' and (${toTs} - ${fromTs}) >= ${awaySeconds} }}`},{condition:'state',entity_id:lock,state:'locked'}],
+    actions:[{wait_template:`{{ ${trigOk} and ${sameArrival} and ${nearbyFresh} }}`,timeout:'00:30:00',continue_on_timeout:false},{condition:'template',value_template:`{{ ${trigOk} and ${sameArrival} and ${nearbyFresh} }}`},{condition:'state',entity_id:source,state:'home'},{condition:'state',entity_id:lock,state:'locked'},{action:'lock.unlock',target:{entity_id:lock}}],
+    mode:'restart'
   };
 }
 class AugustPinManager extends HTMLElement {
@@ -66,7 +73,7 @@ class AugustPinManager extends HTMLElement {
   }
   async run(action,data,success){
     if(this.busy)return;
-    const label=['create','program','delete','provision','recover'].includes(action)?'Waiting for Bluetooth… This can take over a minute. Do not submit again.':'Working…';
+    const label=['create','program','delete','provision','recover','probe','initialize'].includes(action)?'Waiting for Bluetooth… This can take over a minute. Do not submit again.':'Working…';
     this.setBusy(true,label);this.message(label);
     try{
       let result,failure;
@@ -91,6 +98,10 @@ class AugustPinManager extends HTMLElement {
     if(this.model.admin)this.button('Arrival unlock',()=>this.arrivalSettings(),root.querySelector('#settings-tools')).className='secondary';
     if(this.model.admin)this.button('Provision PIN capacity',()=>this.provision(),tools).className='secondary';else root.querySelector('#advanced').remove();
     if(this.model.admin)this.button('Import existing August codes',()=>this.run('import',{},'Import completed. Existing local PINs were preserved.'),root.querySelector('#advanced-tools')).className='secondary';
+    if(this.model.admin){
+      this.button('Read slot occupancy',()=>this.probeSlot(),root.querySelector('#advanced-tools')).className='secondary';
+      this.button('HA-only initialization (last resort)',()=>this.initializeHA(),root.querySelector('#advanced-tools')).className='secondary';
+    }
     const tr=document.createElement('tr');for(const h of ['Slot','Name','HA account','PIN','Status','Actions'])tr.append(this.element('th',h));root.querySelector('thead').append(tr);
     const records=this.model.records.filter(r=>r.has_pin || !['reserved','cleared'].includes(r.status));
     if(records.some(record=>record.status==='needs_attention'||record.status==='pending'))root.querySelector('#editor').before(this.element('p','Needs recovery means a previous PIN operation was not confirmed. It does not prove the PIN is absent or invalid. Retained values are kept for recovery; do not repeatedly delete and re-add the code.',{className:'note'}));
@@ -183,16 +194,63 @@ class AugustPinManager extends HTMLElement {
   provision(){
     const host=this.shadowRoot.querySelector('#editor');host.replaceChildren();
     const form=this.element('form','',{className:'card'});
-    form.append(this.element('h2','Provision PIN capacity'),this.element('p','Discover empty slots without overwriting existing codes. If the lock cannot confirm occupancy, provisioning stops. This does not create a PIN or unlock the door.'));
+    form.append(this.element('h2','Provision PIN capacity'),this.element('p',this.model.initialization?.exclusive?'Expand capacity using unused slots from the acknowledged HA-only clear. No discovery read or additional erase is needed. All keypad code writes on this lock must remain exclusive to HA, including slots not yet allocated. This does not create a PIN or unlock the door.':'Discover empty slots without overwriting existing codes. If the lock cannot confirm occupancy, provisioning stops. This does not create a PIN or unlock the door.'));
     const mode=this.element('select',null);mode.setAttribute('aria-label','Provisioning mode');
     mode.append(this.element('option',`Automatic: one slot per HA user (${this.model.users.length})`,{value:'users'}),this.element('option','Choose total HA PIN capacity',{value:'count'}));
     const count=this.element('input',null,{type:'number',min:1,max:50,value:String(Math.max(1,this.model.users.length)),disabled:true});count.setAttribute('aria-label','Total HA PIN capacity');
     mode.onchange=()=>{count.disabled=mode.value!=='count';count.required=mode.value==='count';};
     for(const [text,input] of [['Provisioning mode',mode],['Total capacity (not slot numbers)',count]]){const label=this.element('label',text);label.append(input);form.append(label);}
     form.append(this.element('p','Automatic mode assigns capacity only, not a generated code. Use Add PIN afterwards. Extra capacity allows additional manually named PINs.'));
-    form.append(this.element('button','Discover and provision',{type:'submit'}));
+    form.append(this.element('button',this.model.initialization?.exclusive?'Provision HA-only capacity':'Discover and provision',{type:'submit'}));
     form.onsubmit=async event=>{event.preventDefault();const result=await this.run('provision',mode.value==='count'?{count:Number(count.value)}:{},'Verified PIN capacity provisioned. Use Add PIN to set a code.');if(result)this.message(`Provisioned ${result.total} HA slots; ${result.assigned} assigned to users. No PINs were generated.`);};
     this.button('Cancel',()=>host.replaceChildren(),form).type='button';host.append(form);
+  }
+  probeSlot(){
+    if(this.busy||!this.model.admin)return;
+    const host=this.shadowRoot.querySelector('#editor');host.replaceChildren();
+    const form=this.element('form','',{className:'card'});
+    form.append(this.element('h2','Read slot occupancy'),this.element('p','Read-only diagnostic: no PIN writes, slot allocation or motor operation. A timeout is unknown, not empty or full.'));
+    const slot=this.element('input',null,{type:'number',min:1,max:255,value:String(this.model.records?.[0]?.slot||1),required:true});slot.setAttribute('aria-label','Slot to inspect');
+    const label=this.element('label','Slot to inspect');label.append(slot);form.append(label,this.element('button','Read slot',{type:'submit'}));
+    form.onsubmit=async event=>{
+      event.preventDefault();if(this.busy)return;
+      const value=Number(slot.value);
+      if(!Number.isInteger(value)||value<1||value>255){this.message('Choose a slot from 1 through 255.');return;}
+      const result=await this.run('probe',{slot:value});
+      if(result){
+        const state=result.slots?.find(record=>record.slot===value)?.state;
+        const status=['occupied','empty'].includes(state)?state:'unknown';
+        this.message(`Slot ${value}: ${status}. ${status==='unknown'?(result.reason||'Occupancy was not confirmed.')+' ':''}No slots allocated or PIN changes sent.`);
+      }
+    };
+    this.button('Cancel',()=>host.replaceChildren(),form).type='button';host.append(form);slot.focus();
+  }
+  initializeHA(){
+    if(this.busy||!this.model.admin)return;
+    const host=this.shadowRoot.querySelector('#editor');host.replaceChildren();
+    const form=this.element('form','',{className:'card'});
+    form.append(this.element('h2','HA-only initialization — last resort'),this.element('p',`Erases ALL keypad PINs on ${this.model.locks?.[0]?.name||'the configured lock'}, including August-created codes. Keep another way to enter. This does not reset the lock, unpair the keypad, change ownership or move the deadbolt. Clear-all hardware behaviour has not yet been verified.`),this.element('p','Use existing-code import or known-slot replacement first. This action is never an automatic fallback for failed discovery. Afterwards, keep code writes exclusive to HA: local clearing does not delete cloud PIN records, and official-app Bluetooth synchronization may restore August codes or reuse slots.'));
+    const mode=this.element('select',null);mode.setAttribute('aria-label','Initialization capacity mode');
+    mode.append(this.element('option',`Automatic: one per HA user (${this.model.users.length})`,{value:'users'}),this.element('option','Choose total HA capacity',{value:'count'}));mode.value='users';
+    const count=this.element('input',null,{type:'number',min:1,max:50,value:String(Math.max(1,this.model.users.length)),disabled:true});count.setAttribute('aria-label','Initialization total capacity');
+    mode.onchange=()=>{count.disabled=mode.value!=='count';count.required=mode.value==='count';};
+    const confirmation=this.element('input',null,{type:'text',value:'',required:true,autocomplete:'off'});confirmation.setAttribute('aria-label','Type ERASE ALL KEYPAD CODES');
+    for(const [text,input]of[['Capacity mode',mode],['Total HA capacity',count],['Type ERASE ALL KEYPAD CODES',confirmation]]){const label=this.element('label',text);label.append(input);form.append(label);}
+    form.append(this.element('p','This chooses HA capacity, not a measured hardware limit. No PINs are generated; use Add PIN after a confirmed clear. Interrupted operations retain recovery data and are never automatically retried.'),this.element('button','Erase all keypad codes and initialize HA',{type:'submit'}));
+    let operationId;
+    form.onsubmit=async event=>{
+      event.preventDefault();if(this.busy)return;
+      if(confirmation.value!=='ERASE ALL KEYPAD CODES'){this.message('Type ERASE ALL KEYPAD CODES exactly before sending a clear-all request.');return;}
+      const total=mode.value==='count'?Number(count.value):this.model.users.length;
+      if(!Number.isInteger(total)||total<1||total>50){this.message('Choose total HA capacity from 1 through 50.');return;}
+      if(!operationId){
+        if(!globalThis.crypto?.getRandomValues){this.message('Secure browser randomness is unavailable; no initialization request sent.');return;}
+        operationId=Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('');
+      }
+      const result=await this.run('initialize',{confirmation:confirmation.value,operation_id:operationId,...(mode.value==='count'?{count:total}:{})});
+      if(result)this.message(result.replayed?'This initialization request was already processed. No new clear was sent; review the refreshed status.':`Clear-all acknowledged. Prepared ${result.total} HA slots; ${result.assigned} assigned. No PINs generated. Use Add PIN; physical keypad acceptance still needs checking when safe.`);
+    };
+    this.button('Cancel',()=>host.replaceChildren(),form).type='button';host.append(form);confirmation.focus();
   }
   arrivalSettings(step='nearby'){
     if(this.busy)return;
@@ -208,4 +266,4 @@ class AugustPinManager extends HTMLElement {
   }
   assign(record){const host=this.shadowRoot.querySelector('#editor');host.replaceChildren();const form=this.element('form','',{className:'card'});form.append(this.element('h2',`Assign / rename · slot ${record.slot}`));const name=this.element('input',null,{value:record.name||'',maxLength:80});name.setAttribute('aria-label','PIN label');const select=this.element('select',null);select.setAttribute('aria-label','HA account');select.append(this.element('option','Admin only',{value:''}));for(const user of this.model.users)select.append(this.element('option',user.name,{value:user.id}));select.value=record.owner_id||'';for(const [label,input]of[['PIN label',name],['HA account',select]]){const l=this.element('label',label);l.append(input);form.append(l);}form.append(this.element('p','Assignment grants that account access to reveal, change, and delete this slot’s code. Other slots stay private.'));form.append(this.element('button','Save assignment',{type:'submit'}));form.onsubmit=e=>{e.preventDefault();const target=select.options[select.selectedIndex].textContent;if(confirm(`Grant ${target} management of slot ${record.slot}?`))this.run('assign',{slot:record.slot,name:name.value,owner_id:select.value},'Assignment saved.');};this.button('Cancel',()=>host.replaceChildren(),form).type='button';host.append(form);form.scrollIntoView({behavior:'smooth',block:'nearest'});}
 }
-customElements.define('august-pin-manager-v24',AugustPinManager);
+customElements.define('august-pin-manager-v27',AugustPinManager);

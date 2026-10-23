@@ -2,7 +2,10 @@
 
 import asyncio
 import copy
+import logging
 import re
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class ManagerError(Exception):
@@ -18,12 +21,21 @@ class InsertNotStarted(ManagerError):
 
 
 class PinManager:
-    def __init__(self, state, save, operate, *, discover=None):
+    def __init__(self, state, save, operate, *, discover=None, clear_all=None):
         self.state = state
         self.save = save
         self.operate = operate
         self.discover = discover
+        self.clear_all = clear_all
         self.lock = asyncio.Lock()
+        initialization = state.get("initialization", {})
+        if initialization.get("status") == "pending":
+            initialization.update(status="needs_attention", command_authorized=False)
+            self._invalidate_clearance(state["records"])
+        if initialization.get("operation_id"):
+            state.setdefault("initialization_requests", {})[
+                initialization["operation_id"]
+            ] = initialization
         # Historical range reservations were only metadata, never occupancy proof.
         for key, record in list(state["records"].items()):
             # A restarted process must not reuse authorization for an interrupted write.
@@ -37,6 +49,111 @@ class PinManager:
                 del state["records"][key]
             elif record.get("source") == "local" and record.get("status") == "active":
                 record["status"] = "programmed_unverified"
+
+    @staticmethod
+    def _invalidate_clearance(records):
+        for record in records.values():
+            record.pop("verified_empty", None)
+            record.pop("cleared_before_insert", None)
+            record["status"] = "needs_attention"
+
+    async def consume_initialization(self, operation_id):
+        """Consume authorization before the wire command; caller holds our lock."""
+        request = self.state.get("initialization", {})
+        if (
+            request.get("operation_id") != operation_id
+            or request.get("status") != "pending"
+            or request.get("command_authorized") is not True
+        ):
+            return False
+        request["command_authorized"] = False
+        await self.save(copy.deepcopy(self.state))
+        return True
+
+    async def initialize(self, user, users, count=None, *, operation_id):
+        """Explicit last resort only: confirmed global clear, then HA capacity."""
+        self.admin(user)
+        if not isinstance(operation_id, str) or not re.fullmatch(
+            r"[0-9a-f]{32}", operation_id
+        ):
+            raise ManagerError("A fresh initialization request ID is required")
+        people = sorted(
+            {u.id: u for u in users if u.is_active and not u.system_generated}.values(),
+            key=lambda u: u.id,
+        )
+        target = len(people) if count is None else count
+        if type(target) is not int or not 1 <= target <= 50:
+            raise ManagerError("Choose total capacity between 1 and 50")
+        if self.clear_all is None:
+            raise ManagerError(
+                "HA-only initialization is unavailable; no clear command sent"
+            )
+        async with self.lock:
+            requests = self.state.setdefault("initialization_requests", {})
+            existing = requests.get(operation_id)
+            if existing:
+                if existing.get("status") == "ready":
+                    return {**existing["receipt"], "replayed": True}
+                raise ManagerError(
+                    "This initialization request was already attempted; no clear resent. "
+                    "Review recovery before explicitly confirming a new initialization."
+                )
+            previous_records = copy.deepcopy(self.state["records"])
+            request = {
+                "operation_id": operation_id,
+                "status": "pending",
+                "command_authorized": True,
+            }
+            requests[operation_id] = request
+            self.state["initialization"] = request
+            self._invalidate_clearance(self.state["records"])
+            try:
+                await self.save(copy.deepcopy(self.state))
+                await self.clear_all(operation_id)
+                if request["command_authorized"] is not False:
+                    raise ManagerError("Initialization authorization was not consumed")
+                records = {}
+                for slot in range(1, target + 1):
+                    person = people[slot - 1] if slot <= len(people) else None
+                    records[str(slot)] = {
+                        "slot": slot,
+                        "name": str(person.name or "HA user")[:80]
+                        if person
+                        else f"Available slot {slot}",
+                        "owner_id": person.id if person else None,
+                        "source": "local",
+                        "status": "cleared",
+                        "access_type": "always",
+                    }
+                self.state["records"] = records
+                receipt = {
+                    "initialized": True,
+                    "allocated": target,
+                    "total": target,
+                    "assigned": min(target, len(people)),
+                }
+                request.update(status="ready", receipt=receipt, exclusive=True)
+                await self.save(copy.deepcopy(self.state))
+            except (Exception, asyncio.CancelledError) as exc:
+                self.state["records"] = previous_records
+                self._invalidate_clearance(previous_records)
+                request.update(status="needs_attention", command_authorized=False)
+                request.pop("receipt", None)
+                try:
+                    await self.save(copy.deepcopy(self.state))
+                except Exception as save_error:
+                    _LOGGER.warning(
+                        "Initialization recovery state could not be persisted: %s",
+                        type(save_error).__name__,
+                    )
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                raise ManagerError(
+                    "HA-only initialization did not complete; outcome may be unknown. "
+                    "Previous credentials were retained for recovery, not treated as cleared. "
+                    "No automatic retry was sent."
+                ) from None
+            return copy.deepcopy(receipt)
 
     @staticmethod
     def reusable(record):
@@ -129,18 +246,34 @@ class PinManager:
             )
             discovery = {"complete": False, "reason": None}
             allocated = 0
+            initialization = self.state.get("initialization", {})
+            exclusive = (
+                initialization.get("status") == "ready"
+                and initialization.get("exclusive") is True
+                and initialization.get("command_authorized") is False
+                and initialization.get("receipt", {}).get("initialized") is True
+            )
             if needed:
-                if self.discover is None:
-                    raise ManagerError(
-                        "Read-only slot discovery is unavailable; no slots allocated"
-                    )
-                discovery = await self.discover(50)
-                # Duplicate or contradictory scan entries must not create free slots.
-                seen = {}
-                for item in discovery.get("slots", []):
-                    slot, status = item.get("slot"), item.get("state")
-                    if type(slot) is int and 1 <= slot <= 255:
-                        seen[slot] = status if slot not in seen else "unknown"
+                if exclusive:
+                    # Explicit global clearing established these unused slots;
+                    # every attempted HA write is journaled as a record first.
+                    seen = {
+                        slot: "empty"
+                        for slot in range(1, 256)
+                        if str(slot) not in records
+                    }
+                else:
+                    if self.discover is None:
+                        raise ManagerError(
+                            "Read-only slot discovery is unavailable; no slots allocated"
+                        )
+                    discovery = await self.discover(50)
+                    # Duplicate/contradictory entries cannot create free slots.
+                    seen = {}
+                    for item in discovery.get("slots", []):
+                        slot, status = item.get("slot"), item.get("state")
+                        if type(slot) is int and 1 <= slot <= 255:
+                            seen[slot] = status if slot not in seen else "unknown"
                 for slot in sorted(seen):
                     existing = records.get(str(slot))
                     recoverable = (
@@ -161,11 +294,12 @@ class PinManager:
                         "slot": slot,
                         "name": f"Available slot {slot}",
                         "owner_id": None,
-                        "source": "local_discovered",
-                        "status": "reserved",
+                        "source": "local" if exclusive else "local_discovered",
+                        "status": "cleared" if exclusive else "reserved",
                         "access_type": "always",
-                        "verified_empty": True,
                     }
+                    if not exclusive:
+                        record["verified_empty"] = True
                     if existing:
                         record.update(
                             owner_id=existing.get("owner_id"),
@@ -178,8 +312,12 @@ class PinManager:
                     if allocated >= needed:
                         break
                 if allocated < needed:
+                    if discovery.get("reason"):
+                        raise ManagerError(
+                            f"{discovery['reason']} No slots allocated and no PIN changes sent."
+                        )
                     raise ManagerError(
-                        "Not enough positively verified empty slots. The lock may not support slot reads or capacity is occupied; no slots allocated and no PIN changes sent."
+                        "Not enough positively verified empty slots in the scanned range; no slots allocated and no PIN changes sent."
                     )
             if automatic:
                 assigned = {
@@ -214,6 +352,9 @@ class PinManager:
                     {r.get("owner_id") for r in capacity if r.get("owner_id") in people}
                 ),
                 "discovery_complete": discovery["complete"],
+                "allocation_source": "ha_only_initialization"
+                if exclusive
+                else "occupancy_read",
                 "reason": discovery.get("reason"),
             }
 

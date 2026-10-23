@@ -1,6 +1,7 @@
 """Authenticated local PIN manager API and custom HA panel."""
 
 import asyncio
+import logging
 from pathlib import Path
 import re
 import time
@@ -68,7 +69,18 @@ async def setup_panel(hass, entry):
             options["pins"] = refs
             hass.config_entries.async_update_entry(entry, options=options)
 
-    async def discover(limit):
+    async def clear_all(operation_id):
+        result = await hass.services.async_call(
+            DOMAIN,
+            "clear_all_keypad",
+            {"initialization_id": operation_id},
+            blocking=True,
+            return_response=True,
+        )
+        if not isinstance(result, dict) or result.get("confirmed") is not True:
+            raise ManagerError("Keypad clear-all acknowledgement was not confirmed")
+
+    async def discover(limit, *, start_slot=1, maximum_slot=255):
         from .inventory import discover_slots
 
         ble_entry = hass.config_entries.async_get_entry(entry.data["entry_id"])
@@ -92,7 +104,24 @@ async def setup_panel(hass, entry):
                 lock = await asyncio.wait_for(push._ensure_connected(), 45)
                 push._cancel_future_update()
                 try:
-                    return await discover_slots(lock, limit)
+                    await asyncio.wait_for(lock.lock_status(), 15)
+                    result = await discover_slots(
+                        lock, limit, start_slot=start_slot, maximum_slot=maximum_slot
+                    )
+                    if result.get("diagnostic"):
+                        diagnostic = result["diagnostic"]
+                        diagnostic["status_before"] = "ok"
+                        try:
+                            await asyncio.wait_for(lock.lock_status(), 15)
+                            diagnostic["status_after"] = "ok"
+                        except Exception as exc:
+                            diagnostic["status_after"] = type(exc).__name__
+                        logging.getLogger(__name__).warning(
+                            "Slot read control checks: slot=%d status_before=ok status_after=%s",
+                            diagnostic["slot"],
+                            diagnostic["status_after"],
+                        )
+                    return result
                 finally:
                     push._complete_operation(time.monotonic())
         except (DisconnectedError, BleakError, TimeoutError):
@@ -102,10 +131,13 @@ async def setup_panel(hass, entry):
         finally:
             push._operation_lock.release()
 
-    manager = PinManager(state, store.async_save, operate, discover=discover)
+    manager = PinManager(
+        state, store.async_save, operate, discover=discover, clear_all=clear_all
+    )
     await store.async_save(state)
     hass.data.setdefault(DOMAIN, {})["manager"] = manager
     hass.data[DOMAIN]["entry"] = entry
+    hass.data[DOMAIN]["discover"] = discover
     if not hass.data[DOMAIN].get("panel_registered"):
         hass.http.register_view(ManagerView())
         await hass.http.async_register_static_paths(
@@ -120,10 +152,10 @@ async def setup_panel(hass, entry):
         await panel_custom.async_register_panel(
             hass,
             frontend_url_path="august-local-keypad",
-            webcomponent_name="august-pin-manager-v24",
+            webcomponent_name="august-pin-manager-v27",
             sidebar_title="Door PINs",
             sidebar_icon="mdi:dialpad",
-            module_url="/august-local-keypad/panel.js?v=24",
+            module_url="/august-local-keypad/panel.js?v=27",
         )
         hass.data[DOMAIN]["panel_registered"] = True
 
@@ -152,6 +184,16 @@ class ManagerView(HomeAssistantView):
             "users": users,
             "pin_scheduling": False,
             "pin_schedule_reason": "Day/time restrictions are not yet verified on this lock. Manage scheduled codes in the August app; HA timers are not used to simulate security restrictions.",
+        }
+        initialization = manager.state.get("initialization", {})
+        status = (
+            initialization.get("status") if isinstance(initialization, dict) else None
+        )
+        result["initialization"] = {
+            "status": status
+            if status in ("pending", "needs_attention", "ready")
+            else None,
+            "exclusive": status == "ready" and initialization.get("exclusive") is True,
         }
         if user.is_admin:
             entry = hass.data[DOMAIN]["entry"]
@@ -281,12 +323,33 @@ class ManagerView(HomeAssistantView):
                 users = await hass.auth.async_get_users()
                 result = await manager.provision(user, users, data.get("count"))
                 return self.json({"ok": True, **result})
+            if action == "initialize":
+                manager.admin(user)
+                if data.get("confirmation") != "ERASE ALL KEYPAD CODES":
+                    raise ManagerError(
+                        "Type ERASE ALL KEYPAD CODES to confirm last-resort HA-only initialization"
+                    )
+                users = await hass.auth.async_get_users()
+                result = await manager.initialize(
+                    user,
+                    users,
+                    data.get("count"),
+                    operation_id=data.get("operation_id"),
+                )
+                return self.json({"ok": True, **result})
             if action == "create":
                 slot = await manager.create(user, data.get("pin"), data.get("name", ""))
                 return self.json({"ok": True, "slot": slot})
             slot = data.get("slot")
             if type(slot) is not int or not 1 <= slot <= 255:
                 raise ManagerError("Invalid slot")
+            if action == "probe":
+                manager.admin(user)
+                reader = hass.data[DOMAIN].get("discover")
+                if reader is None:
+                    raise ManagerError("Read-only slot diagnostics are unavailable")
+                result = await reader(1, start_slot=slot, maximum_slot=slot)
+                return self.json({"ok": True, **result})
             if action == "recover":
                 if data.get("confirmed_clear") is not True:
                     raise ManagerError(

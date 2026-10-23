@@ -15,7 +15,7 @@ class Element {
   querySelectorAll(selector) { return this.descendants().filter(child=>selector.split(',').includes(child.tag)); }
   descendants() { return this.children.flatMap(child=>[child,...child.descendants()]); }
 }
-const context=vm.createContext({HTMLElement:class {}, document:{createElement:tag=>new Element(tag)},customElements:{define(){}},console});
+const context=vm.createContext({HTMLElement:class {}, document:{createElement:tag=>new Element(tag)},customElements:{define(){}},console,crypto:require('node:crypto').webcrypto});
 vm.runInContext(fs.readFileSync('custom_components/august_local/panel.js','utf8')+'\nthis.Panel=AugustPinManager; this.makeArrival=arrivalAutomation;',context);
 function panel() {
   const p=new context.Panel();
@@ -50,12 +50,100 @@ async function main() {
   mode.value='count';mode.onchange();count.value='4';
   await form.onsubmit({preventDefault(){}});
   assert.equal(submitted.data.count,4);
+  {
+    const [ui,capacityHosts]=panel();ui.model.initialization={status:'ready',exclusive:true};
+    let action;ui.run=async value=>{action=value;return {total:2,assigned:2};};
+    ui.provision();const capacity=capacityHosts['#editor'].children[0];
+    assert.match(capacity.children.find(e=>e.tag==='p').textContent,/All keypad code writes on this lock must remain exclusive to HA, including slots not yet allocated/);
+    assert.equal(capacity.children.find(e=>e.tag==='button'&&e.type==='submit').textContent,'Provision HA-only capacity');
+    await capacity.onsubmit({preventDefault(){}});assert.equal(action,'provision');
+  }
+  {
+    const [ui,advancedHosts]=panel();ui.model.admin=true;
+    const requests=[];ui.run=async(action,data)=>{requests.push({action,data});return {initialized:true,total:3,assigned:2};};
+    ui.initializeHA();const initializer=advancedHosts['#editor'].children[0];
+    const input=label=>initializer.descendants().find(e=>e['aria-label']===label);
+    const confirmation=input('Type ERASE ALL KEYPAD CODES');
+    await initializer.onsubmit({preventDefault(){}});assert.equal(requests.length,0);
+    confirmation.value='ERASE ALL KEYPAD CODES';
+    const mode=input('Initialization capacity mode'),count=input('Initialization total capacity');
+    mode.value='count';mode.onchange();count.value='0';
+    await initializer.onsubmit({preventDefault(){}});assert.equal(requests.length,0);
+    count.value='3';await initializer.onsubmit({preventDefault(){}});
+    assert.equal(requests[0].action,'initialize');assert.equal(requests[0].data.count,3);
+    assert.match(requests[0].data.operation_id,/^[0-9a-f]{32}$/);
+    await initializer.onsubmit({preventDefault(){}});
+    assert.equal(requests[0].data.operation_id,requests[1].data.operation_id);
+    ui.busy=true;await initializer.onsubmit({preventDefault(){}});assert.equal(requests.length,2);
+    ui.busy=false;ui.provision();await advancedHosts['#editor'].children[0].onsubmit({preventDefault(){}});
+    assert.equal(requests[2].action,'provision');
+  }
+  {
+    const [ui,advancedHosts]=panel();ui.model.admin=true;let called=0,message='';
+    ui.message=text=>message=text;ui.run=async()=>{called++;};
+    const crypto=context.crypto;context.crypto=undefined;
+    ui.initializeHA();const initializer=advancedHosts['#editor'].children[0];
+    initializer.descendants().find(e=>e['aria-label']==='Type ERASE ALL KEYPAD CODES').value='ERASE ALL KEYPAD CODES';
+    await initializer.onsubmit({preventDefault(){}});
+    assert.equal(called,0);assert.match(message,/no initialization request sent/);
+    context.crypto=crypto;
+  }
+  {
+    const [ui,advancedHosts]=panel();ui.model.admin=true;let message='',request;
+    ui.message=text=>message=text;ui.run=async(action,data)=>{request={action,data};return {slots:[{slot:26,state:'unknown'}],reason:'TIMEOUT slot=26'};};
+    ui.probeSlot();const probe=advancedHosts['#editor'].children[0];
+    probe.descendants().find(e=>e['aria-label']==='Slot to inspect').value='26';
+    await probe.onsubmit({preventDefault(){}});
+    assert.equal(request.action,'probe');assert.equal(request.data.slot,26);
+    assert.match(message,/Slot 26: unknown/);assert.doesNotMatch(message,/empty/);
+    assert.match(message,/No slots allocated or PIN changes sent/);
+    ui.model.admin=false;advancedHosts['#editor'].replaceChildren();
+    ui.initializeHA();ui.probeSlot();assert.equal(advancedHosts['#editor'].children.length,0);
+  }
   const automation=context.makeArrival('person.test','lock.test',300,'binary_sensor.near');
   assert.equal(automation.initial_state,false);
+  assert.equal(automation.mode,'restart');
   assert.equal(automation.actions[0].continue_on_timeout,false);
   assert.match(automation.actions[0].wait_template,/last_seen/);
-  assert.match(automation.actions[0].wait_template,/>= as_timestamp\(trigger.to_state.last_changed\)/);
+  assert.match(automation.actions[0].wait_template,/>= as_timestamp\(trigger\.to_state\.last_changed, none\)/);
   assert.throws(()=>context.makeArrival('person.test','lock.test',300,''));
+  {
+    // protected trigger: fail-closed on missing trigger/from/to and invalid timestamps
+    const cond=automation.conditions[0].value_template;
+    assert.match(cond,/trigger is not none/);
+    assert.match(cond,/trigger\.from_state is not none/);
+    assert.match(cond,/trigger\.to_state is not none/);
+    assert.match(cond,/as_timestamp\(trigger\.from_state\.last_changed, none\) is not none/);
+    assert.match(cond,/as_timestamp\(trigger\.to_state\.last_changed, none\) is not none/);
+    assert.match(cond,/from_state\.state not in \['home'/);
+    assert.match(cond,/trigger\.to_state\.state == 'home'/);
+    // actual transition duration: to_state.last_changed minus from_state.last_changed, not now()
+    assert.doesNotMatch(cond,/as_timestamp\(now\(\)\)/);
+    assert.match(cond,/as_timestamp\(trigger\.to_state\.last_changed, none\) - as_timestamp\(trigger\.from_state\.last_changed, none\)/);
+    assert.match(cond,/>=\s*300/);
+    // no-future freshness in wait_template: age >= 0
+    const wt=automation.actions[0].wait_template;
+    assert.match(wt,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) >= 0/);
+    assert.match(wt,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) < 10/);
+    // same-arrival identity check in wait_template
+    assert.match(wt,/is_state\('person\.test', 'home'\)/);
+    assert.match(wt,/as_timestamp\(states\['person\.test'\]\.last_changed, none\) == as_timestamp\(trigger\.to_state\.last_changed, none\)/);
+    assert.match(wt,/trigger is not none/);
+    // final recheck in actions[1]: identity + nearby freshness immediately before unlock
+    const recheck=automation.actions[1].value_template;
+    assert.equal(automation.actions[1].condition,'template');
+    assert.match(recheck,/is_state\('person\.test', 'home'\)/);
+    assert.match(recheck,/as_timestamp\(states\['person\.test'\]\.last_changed, none\)/);
+    assert.match(recheck,/is_state\('binary_sensor\.near', 'on'\)/);
+    assert.match(recheck,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) >= 0/);
+    assert.match(recheck,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) < 10/);
+    // locked-state check and unlock action at correct positions
+    assert.equal(automation.actions[3].condition,'state');
+    assert.equal(automation.actions[3].entity_id,'lock.test');
+    assert.equal(automation.actions[3].state,'locked');
+    assert.equal(automation.actions[4].action,'lock.unlock');
+    assert.equal(automation.actions[4].target.entity_id,'lock.test');
+  }
   function runner() {
     const ui=new context.Panel();
     ui.shadowRoot=new Element('root');ui.shadowRoot.host=new Element('host');

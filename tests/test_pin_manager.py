@@ -89,6 +89,37 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         discover.assert_awaited_once()
         operate.assert_not_awaited()
 
+    async def test_scan_failure_is_not_reported_as_full_capacity(self):
+        m, save, operate, discover = self.manager()
+        discover.return_value = {
+            "slots": [{"slot": 1, "state": "unknown"}],
+            "complete": False,
+            "reason": "Slot 1 read rejected with result 2.",
+        }
+        with self.assertRaisesRegex(
+            module.ManagerError, "Slot 1 read rejected with result 2"
+        ) as caught:
+            await m.provision(person("admin", True), [], count=2)
+        self.assertNotIn("capacity is occupied", str(caught.exception))
+        self.assertEqual(m.state["records"], {})
+        save.assert_not_awaited()
+        operate.assert_not_awaited()
+
+    async def test_partial_scan_failure_does_not_persist_insufficient_allocation(self):
+        m, save, operate, discover = self.manager()
+        discover.return_value = {
+            "slots": [{"slot": 1, "state": "empty"}, {"slot": 2, "state": "unknown"}],
+            "complete": False,
+            "reason": "Slot 2 occupancy read timed out.",
+        }
+        with self.assertRaisesRegex(
+            module.ManagerError, "Slot 2 occupancy read timed out"
+        ):
+            await m.provision(person("admin", True), [], count=2)
+        self.assertEqual(m.state["records"], {})
+        save.assert_not_awaited()
+        operate.assert_not_awaited()
+
     async def test_count_is_total_and_extra_pin_uses_unassigned_capacity(self):
         m, _, operate, _ = self.manager()
         admin = person("admin", True)
@@ -588,6 +619,300 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(push._operation_lock.locked())
         read.assert_not_awaited()
         push._cancel_future_update.assert_not_called()
+
+
+class InitializationTests(unittest.IsolatedAsyncioTestCase):
+    operation_id = "a" * 32
+
+    def manager(self):
+        state = {
+            "records": {
+                "1": {
+                    "slot": 1,
+                    "pin": "123456",
+                    "pending_pin": "654321",
+                    "source": "local",
+                    "status": "programmed_unverified",
+                    "owner_id": "admin",
+                },
+                "2": empty(2),
+            }
+        }
+        save = AsyncMock()
+        clear = AsyncMock()
+        manager = module.PinManager(state, save, AsyncMock(), clear_all=clear)
+
+        async def confirm(token):
+            self.assertTrue(await manager.consume_initialization(token))
+            self.assertFalse(await manager.consume_initialization(token))
+            self.assertFalse(
+                save.await_args.args[0]["initialization"]["command_authorized"]
+            )
+
+        clear.side_effect = confirm
+        return manager, save, clear
+
+    async def test_confirmed_clear_allocates_only_requested_capacity_without_generating_pins(
+        self,
+    ):
+        manager, save, clear = self.manager()
+        admin, other = person("admin", True), person("other")
+        result = await manager.initialize(
+            admin,
+            [
+                other,
+                admin,
+                person("system", system=True),
+                person("disabled", active=False),
+            ],
+            operation_id=self.operation_id,
+        )
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["assigned"], 2)
+        self.assertEqual(
+            [r["owner_id"] for r in manager.state["records"].values()],
+            ["admin", "other"],
+        )
+        self.assertTrue(
+            all(
+                r["status"] == "cleared" and "pin" not in r and "pending_pin" not in r
+                for r in manager.state["records"].values()
+            )
+        )
+        self.assertTrue(
+            save.await_args_list[0].args[0]["initialization"]["command_authorized"]
+        )
+        self.assertEqual(save.await_count, 3)
+        clear.assert_awaited_once_with(self.operation_id)
+        manager.operate.assert_not_awaited()
+
+    async def test_duplicate_request_never_reclears_even_after_new_codes_or_another_initialization(
+        self,
+    ):
+        manager, _, clear = self.manager()
+        admin = person("admin", True)
+        await manager.initialize(admin, [admin], 1, operation_id=self.operation_id)
+        await manager.initialize(admin, [admin], 1, operation_id="b" * 32)
+        manager.state["records"]["1"]["pin"] = "3456"
+        replay = await manager.initialize(
+            admin, [admin], 1, operation_id=self.operation_id
+        )
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(clear.await_count, 2)
+        self.assertEqual(manager.state["records"]["1"]["pin"], "3456")
+
+    async def test_admin_id_and_capacity_validation_precede_any_mutation(self):
+        for user, count, token in (
+            (person("guest"), 2, self.operation_id),
+            (person("admin", True), True, self.operation_id),
+            (person("admin", True), 51, self.operation_id),
+            (person("admin", True), 2, "invalid"),
+        ):
+            manager, save, clear = self.manager()
+            before = copy.deepcopy(manager.state)
+            with self.assertRaises(module.ManagerError):
+                await manager.initialize(user, [user], count, operation_id=token)
+            self.assertEqual(manager.state, before)
+            save.assert_not_awaited()
+            clear.assert_not_awaited()
+
+    async def test_unavailable_clear_callback_is_not_simulated(self):
+        manager, save, _ = self.manager()
+        manager.clear_all = None
+        with self.assertRaises(module.ManagerError):
+            await manager.initialize(
+                person("admin", True), [], 2, operation_id=self.operation_id
+            )
+        save.assert_not_awaited()
+
+    async def test_timeout_preserves_codes_invalidates_empty_proof_and_does_not_retry(
+        self,
+    ):
+        manager, _, clear = self.manager()
+
+        async def timeout(token):
+            await manager.consume_initialization(token)
+            raise TimeoutError("sensitive transport details")
+
+        clear.side_effect = timeout
+        with self.assertRaisesRegex(
+            module.ManagerError, "retained for recovery"
+        ) as caught:
+            await manager.initialize(
+                person("admin", True), [], 3, operation_id=self.operation_id
+            )
+        self.assertNotIn("sensitive", str(caught.exception))
+        self.assertEqual(manager.state["records"]["1"]["pin"], "123456")
+        self.assertEqual(manager.state["records"]["1"]["pending_pin"], "654321")
+        self.assertFalse(
+            any(manager.reusable(r) for r in manager.state["records"].values())
+        )
+        with self.assertRaisesRegex(module.ManagerError, "already attempted"):
+            await manager.initialize(
+                person("admin", True), [], 3, operation_id=self.operation_id
+            )
+        clear.assert_awaited_once()
+
+    async def test_restart_invalidates_pending_global_authorization(self):
+        state = {
+            "records": {"2": empty(2)},
+            "initialization": {
+                "operation_id": self.operation_id,
+                "status": "pending",
+                "command_authorized": True,
+            },
+        }
+        manager = module.PinManager(
+            state, AsyncMock(), AsyncMock(), clear_all=AsyncMock()
+        )
+        self.assertEqual(state["initialization"]["status"], "needs_attention")
+        self.assertFalse(await manager.consume_initialization(self.operation_id))
+        self.assertFalse(manager.reusable(state["records"]["2"]))
+
+    async def test_callback_success_without_consumed_authorization_cannot_grant_empty_slots(
+        self,
+    ):
+        manager, _, clear = self.manager()
+        clear.side_effect = None
+        with self.assertRaises(module.ManagerError):
+            await manager.initialize(
+                person("admin", True), [], 3, operation_id=self.operation_id
+            )
+        self.assertEqual(manager.state["records"]["1"]["pin"], "123456")
+        self.assertFalse(
+            any(manager.reusable(r) for r in manager.state["records"].values())
+        )
+
+    async def test_final_save_failure_preserves_previous_credentials_and_unknown_outcome(
+        self,
+    ):
+        manager, save, clear = self.manager()
+
+        async def persist(state):
+            if state["initialization"]["status"] == "ready":
+                raise OSError("private path")
+
+        save.side_effect = persist
+        with self.assertRaises(module.ManagerError):
+            await manager.initialize(
+                person("admin", True), [], 3, operation_id=self.operation_id
+            )
+        self.assertEqual(manager.state["records"]["1"]["pin"], "123456")
+        self.assertEqual(manager.state["initialization"]["status"], "needs_attention")
+        clear.assert_awaited_once()
+
+    async def test_journal_failure_blocks_clear_command(self):
+        manager, save, clear = self.manager()
+        save.side_effect = OSError("private path")
+        with self.assertRaises(module.ManagerError):
+            await manager.initialize(
+                person("admin", True), [], 3, operation_id=self.operation_id
+            )
+        clear.assert_not_awaited()
+        self.assertEqual(manager.state["records"]["1"]["pin"], "123456")
+
+    async def test_cancelled_initializer_propagates_and_keeps_recovery_evidence(self):
+        manager, _, clear = self.manager()
+        clear.side_effect = asyncio.CancelledError()
+        with self.assertRaises(asyncio.CancelledError):
+            await manager.initialize(
+                person("admin", True), [], 3, operation_id=self.operation_id
+            )
+        self.assertEqual(manager.state["records"]["1"]["pin"], "123456")
+        self.assertEqual(manager.state["initialization"]["status"], "needs_attention")
+        self.assertFalse(manager.state["initialization"]["command_authorized"])
+
+    async def test_failed_discovery_never_uses_clear_all_as_fallback(self):
+        manager, _, clear = self.manager()
+        manager.discover = AsyncMock(
+            return_value={
+                "slots": [{"slot": 1, "state": "unknown"}],
+                "reason": "TIMEOUT",
+                "complete": False,
+            }
+        )
+        with self.assertRaises(module.ManagerError):
+            await manager.provision(person("admin", True), [], count=3)
+        clear.assert_not_awaited()
+
+    async def test_exclusive_capacity_can_grow_without_another_clear_or_read(self):
+        manager, _, clear = self.manager()
+        admin = person("admin", True)
+        await manager.initialize(admin, [admin], 1, operation_id=self.operation_id)
+        manager.discover = AsyncMock(side_effect=AssertionError("No read needed"))
+        result = await manager.provision(admin, [admin], count=4)
+        self.assertEqual(result["total"], 4)
+        self.assertEqual(result["allocated"], 3)
+        self.assertEqual(result["allocation_source"], "ha_only_initialization")
+        self.assertTrue(
+            all(manager.reusable(r) for r in manager.state["records"].values())
+        )
+        self.assertTrue(
+            all(r["source"] == "local" for r in manager.state["records"].values())
+        )
+        manager.discover.assert_not_awaited()
+        clear.assert_awaited_once()
+        manager.operate.assert_not_awaited()
+
+    async def test_exclusive_growth_never_reuses_an_uncertain_record(self):
+        manager, _, _ = self.manager()
+        admin = person("admin", True)
+        await manager.initialize(admin, [admin], 1, operation_id=self.operation_id)
+        uncertain = {
+            "slot": 2,
+            "source": "local",
+            "status": "needs_attention",
+            "pending_pin": "3456",
+        }
+        manager.state["records"]["2"] = copy.deepcopy(uncertain)
+        manager.discover = AsyncMock()
+        await manager.provision(admin, [admin], count=2)
+        self.assertEqual(manager.state["records"]["2"], uncertain)
+        self.assertTrue(manager.reusable(manager.state["records"]["3"]))
+        manager.discover.assert_not_awaited()
+
+    async def test_incomplete_or_unconfirmed_initialization_never_authorizes_growth(
+        self,
+    ):
+        for field, value in (
+            ("status", "pending"),
+            ("status", "needs_attention"),
+            ("exclusive", False),
+            ("command_authorized", True),
+        ):
+            manager, _, clear = self.manager()
+            admin = person("admin", True)
+            await manager.initialize(admin, [admin], 1, operation_id=self.operation_id)
+            manager.state["initialization"][field] = value
+            manager.discover = AsyncMock(
+                return_value={"slots": [], "reason": "TIMEOUT", "complete": False}
+            )
+            with self.assertRaises(module.ManagerError):
+                await manager.provision(admin, [admin], count=2)
+            self.assertNotIn("2", manager.state["records"])
+            manager.discover.assert_awaited_once()
+            clear.assert_awaited_once()
+
+    async def test_exclusive_clearance_survives_restart_but_not_an_interrupted_new_clear(
+        self,
+    ):
+        manager, save, clear = self.manager()
+        admin = person("admin", True)
+        await manager.initialize(admin, [admin], 1, operation_id=self.operation_id)
+        restarted = module.PinManager(
+            copy.deepcopy(manager.state), save, AsyncMock(), clear_all=clear
+        )
+        await restarted.provision(admin, [admin], count=2)
+        self.assertTrue(restarted.reusable(restarted.state["records"]["2"]))
+        restarted.state["initialization"]["status"] = "pending"
+        interrupted = module.PinManager(
+            copy.deepcopy(restarted.state), save, AsyncMock()
+        )
+        with self.assertRaises(module.ManagerError):
+            await interrupted.provision(admin, [admin], count=3)
+        self.assertFalse(
+            any(interrupted.reusable(r) for r in interrupted.state["records"].values())
+        )
 
 
 if __name__ == "__main__":

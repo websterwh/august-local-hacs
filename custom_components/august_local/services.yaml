@@ -41,6 +41,15 @@ delete:
       selector:
         text:
 
+clear_all_keypad:
+  name: Guarded last-resort keypad initialization
+  description: Internal operation for administrator-confirmed HA-only initialization. Erases all keypad PINs on the configured ASL-05, not ownership or pairing. Requires an exact pending one-use initialization ID; a direct call cannot bypass the manager confirmation. Never called automatically by discovery or provisioning. Hardware clear-all behaviour is not yet verified.
+  fields:
+    initialization_id:
+      required: true
+      selector:
+        text:
+
 insert:
   name: Insert PIN in verified empty local slot
   description: Program an owned slot using a fresh empty-slot read, or a one-use manager proof that HA acknowledged clearing that same slot. Direct calls cannot request a probe bypass. Unknown occupancy blocks insertion. Prefer the Door PINs manager UI.
