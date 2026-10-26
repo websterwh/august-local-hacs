@@ -103,46 +103,56 @@ async function main() {
   const automation=context.makeArrival('person.test','lock.test',300,'binary_sensor.near');
   assert.equal(automation.initial_state,false);
   assert.equal(automation.mode,'restart');
-  assert.equal(automation.actions[0].continue_on_timeout,false);
-  assert.match(automation.actions[0].wait_template,/last_seen/);
-  assert.match(automation.actions[0].wait_template,/>= as_timestamp\(trigger\.to_state\.last_changed, none\)/);
+  assert.equal(automation.actions[4].continue_on_timeout,false);
+  assert.equal(automation.actions[4].timeout,'00:30:00');
+  assert.match(automation.actions[4].wait_template,/last_seen/);
+  assert.match(automation.actions[4].wait_template,/>= \(arrival_at \| float\)/);
   assert.throws(()=>context.makeArrival('person.test','lock.test',300,''));
   {
-    // protected trigger: fail-closed on missing trigger/from/to and invalid timestamps
-    const cond=automation.conditions[0].value_template;
+    // Forced GPS reports reset last_changed even without changing displayed home/away.
+    // Continuous template truth, not last_changed subtraction, measures the away period.
+    assert.equal(automation.triggers[0].trigger,'template');
+    assert.equal(automation.triggers[0].for.seconds,300);
+    assert.equal(automation.triggers[0].id,'away_ready');
+    assert.match(automation.triggers[0].value_template,/not in \['home', 'unknown', 'unavailable'\]/);
+    assert.doesNotMatch(JSON.stringify(automation),/last_changed/);
+    // Invalidation must not be stopped by automation-level conditions before restart.
+    assert.equal(automation.conditions.length,0);
+    assert.equal(automation.triggers[1].from,'home');
+    assert.equal(automation.triggers[1].not_to,'home');
+    assert.deepEqual(Array.from(automation.triggers[2].to),['unknown','unavailable']);
+    const cond=automation.actions[0].value_template;
     assert.match(cond,/trigger is not none/);
     assert.match(cond,/trigger\.from_state is not none/);
     assert.match(cond,/trigger\.to_state is not none/);
-    assert.match(cond,/as_timestamp\(trigger\.from_state\.last_changed, none\) is not none/);
-    assert.match(cond,/as_timestamp\(trigger\.to_state\.last_changed, none\) is not none/);
-    assert.match(cond,/from_state\.state not in \['home'/);
-    assert.match(cond,/trigger\.to_state\.state == 'home'/);
-    // actual transition duration: to_state.last_changed minus from_state.last_changed, not now()
-    assert.doesNotMatch(cond,/as_timestamp\(now\(\)\)/);
-    assert.match(cond,/as_timestamp\(trigger\.to_state\.last_changed, none\) - as_timestamp\(trigger\.from_state\.last_changed, none\)/);
-    assert.match(cond,/>=\s*300/);
+    assert.match(cond,/trigger.id == 'away_ready'/);
+    assert.match(cond,/trigger.platform == 'template'/);
+    assert.match(cond,/trigger\.from_state\.state == 'home'/);
+    assert.match(cond,/trigger\.to_state\.state not in \['home', 'unknown', 'unavailable'\]/);
+    // A return must follow arming; unknown/unavailable cannot become an arrival.
+    assert.match(automation.actions[1].wait_template,/in \['home', 'unknown', 'unavailable'\]/);
+    assert.equal(automation.actions[2].condition,'state');
+    assert.equal(automation.actions[2].state,'home');
+    assert.match(automation.actions[3].variables.arrival_at,/as_timestamp\(now\(\)\)/);
     // no-future freshness in wait_template: age >= 0
-    const wt=automation.actions[0].wait_template;
+    const wt=automation.actions[4].wait_template;
     assert.match(wt,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) >= 0/);
     assert.match(wt,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) < 10/);
-    // same-arrival identity check in wait_template
-    assert.match(wt,/is_state\('person\.test', 'home'\)/);
-    assert.match(wt,/as_timestamp\(states\['person\.test'\]\.last_changed, none\) == as_timestamp\(trigger\.to_state\.last_changed, none\)/);
-    assert.match(wt,/trigger is not none/);
-    // final recheck in actions[1]: identity + nearby freshness immediately before unlock
-    const recheck=automation.actions[1].value_template;
-    assert.equal(automation.actions[1].condition,'template');
+    // Departure wakes the wait and cancels the run even for a subsequent short trip.
+    assert.match(wt,/not is_state\('person\.test', 'home'\) or/);
+    const recheck=automation.actions[5].value_template;
+    assert.equal(automation.actions[5].condition,'template');
     assert.match(recheck,/is_state\('person\.test', 'home'\)/);
-    assert.match(recheck,/as_timestamp\(states\['person\.test'\]\.last_changed, none\)/);
+    assert.match(recheck,/arrival_at is defined and is_number\(arrival_at\)/);
     assert.match(recheck,/is_state\('binary_sensor\.near', 'on'\)/);
     assert.match(recheck,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) >= 0/);
     assert.match(recheck,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) < 10/);
     // locked-state check and unlock action at correct positions
-    assert.equal(automation.actions[3].condition,'state');
-    assert.equal(automation.actions[3].entity_id,'lock.test');
-    assert.equal(automation.actions[3].state,'locked');
-    assert.equal(automation.actions[4].action,'lock.unlock');
-    assert.equal(automation.actions[4].target.entity_id,'lock.test');
+    assert.equal(automation.actions[7].condition,'state');
+    assert.equal(automation.actions[7].entity_id,'lock.test');
+    assert.equal(automation.actions[7].state,'locked');
+    assert.equal(automation.actions[8].action,'lock.unlock');
+    assert.equal(automation.actions[8].target.entity_id,'lock.test');
   }
   function runner() {
     const ui=new context.Panel();

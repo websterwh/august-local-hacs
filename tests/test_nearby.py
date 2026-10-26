@@ -81,21 +81,25 @@ class NearGateTests(unittest.TestCase):
         gate.sample(102, -60, 102)
         self.assertTrue(gate.near)
 
-    def test_threshold_boundary_and_weak_sample_reset(self):
+    def test_threshold_boundary_and_weak_sample_decay(self):
         gate = nearby.NearGate(-65)
         for timestamp in (100, 101, 102):
             gate.sample(timestamp, -65, timestamp)
         self.assertTrue(gate.near)
+        self.assertEqual(gate.samples, 3)
         gate.sample(103, -66, 103)
+        self.assertEqual(gate.samples, 2)
+        gate.sample(104, -66, 104)
+        gate.sample(105, -66, 105)
         self.assertFalse(gate.near)
         self.assertEqual(gate.samples, 0)
-        gate.sample(104, -60, 104)
+        gate.sample(106, -60, 106)
         self.assertFalse(gate.near)
         self.assertEqual(gate.samples, 1)
 
     def test_rejects_stale_future_duplicate_and_out_of_order(self):
         gate = nearby.NearGate(-65)
-        self.assertFalse(gate.sample(96, -60, 100))
+        self.assertFalse(gate.sample(94, -60, 100))
         self.assertFalse(gate.sample(102, -60, 100))
         self.assertTrue(gate.sample(100, -60, 100))
         self.assertFalse(gate.sample(100, -60, 100))
@@ -105,14 +109,13 @@ class NearGateTests(unittest.TestCase):
 
     def test_gap_resets_old_strong_samples(self):
         gate = nearby.NearGate(-65)
-        for timestamp in (100, 101, 105):
+        for timestamp in (100, 101, 110):
             gate.sample(timestamp, -60, timestamp)
         self.assertFalse(gate.near)
         self.assertEqual(gate.samples, 1)
-        for timestamp in (106, 107):
+        for timestamp in (111, 112):
             gate.sample(timestamp, -60, timestamp)
         self.assertTrue(gate.near)
-
     def test_beacon_must_match_signature_uuid_major_and_minor(self):
         self.assertTrue(nearby.matches_beacon({0x004C: PAYLOAD}, PROFILE))
         for index in (0, 2, 18, 20):

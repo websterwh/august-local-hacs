@@ -33,15 +33,20 @@ class NearGate:
         self.samples = 0
         self.near = False
     def sample(self, timestamp, rssi, now):
-        if now - timestamp > 3 or timestamp > now + 1 or (self.last is not None and timestamp <= self.last):
+        if now - timestamp > 5 or timestamp > now + 1 or (self.last is not None and timestamp <= self.last):
             return False
-        if self.last is not None and timestamp - self.last > 3:
+        if self.last is not None and timestamp - self.last > 8:
             self.reset()
         self.last = timestamp
         if rssi < self.threshold:
-            self.start = None; self.samples = 0; self.near = False
+            self.near = False
+            if self.samples > 0:
+                self.samples -= 1
+            if self.samples == 0:
+                self.start = None
         else:
-            if self.start is None: self.start = timestamp
+            if self.start is None:
+                self.start = timestamp
             self.samples += 1
             self.near = self.samples >= 3 and timestamp - self.start >= 2
         return True

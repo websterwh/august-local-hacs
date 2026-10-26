@@ -152,10 +152,10 @@ async def setup_panel(hass, entry):
         await panel_custom.async_register_panel(
             hass,
             frontend_url_path="august-local-keypad",
-            webcomponent_name="august-pin-manager-v27",
+            webcomponent_name="august-pin-manager",
             sidebar_title="Door PINs",
             sidebar_icon="mdi:dialpad",
-            module_url="/august-local-keypad/panel.js?v=27",
+            module_url="/august-local-keypad/panel.js",
         )
         hass.data[DOMAIN]["panel_registered"] = True
 

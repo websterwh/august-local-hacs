@@ -111,9 +111,9 @@ Open Home Assistant sidebar → **Door PINs** to:
 4. Use **2. Arrival automation** to select the home entity and fresh nearby-phone sensor
 5. Create the automation, review it, and explicitly enable it. New automations start disabled
 
-Arrival requires a transition from a known away state to home after the configured minimum time away. It does not unlock merely because a phone already at home approaches the receiver. The time away is measured between the actual state-transition timestamps, not when a delayed action happens to run. A newer eligible arrival replaces an older waiting run; a later short trip cannot reuse the previous arrival's authorization.
+Arrival requires an observed departure from home, continuously known-away location for the configured minimum time, and a subsequent return home. A template trigger measures continuous absence; forced GPS reports can reset `last_changed`, so timestamp subtraction is not reliable for this purpose. Moving between named away zones does not reset the minimum period. Enabling, reloading or restarting while already away does not arm unlocking: a new complete home/departure/return cycle is required. An unknown or unavailable location invalidates eligibility, and every new departure immediately cancels any previous proximity wait, even for a short trip.
 
-The automation waits up to 30 minutes for matching door-proxy proximity. Detection requires three sufficiently strong samples spanning at least two seconds. Before unlocking it checks again that the same arrival is still current, proximity is on, the latest sample is less than ten seconds old and no earlier than arrival, and the lock is locked. Future timestamps, unavailable states and wait timeouts do not authorize unlocking. Calibrate the RSSI threshold with the phone actually by the door; do not lower it merely to force a test to pass. BLE beacons are not authenticated credentials, and location accuracy still matters.
+The automation waits up to 30 minutes for matching door-proxy proximity. Proximity detection uses a decay accumulator requiring at least three strong samples spanning two seconds, accommodating background BLE packet intervals. Before unlocking it checks that the phone remains home, proximity is fresh (<10s old and no earlier than arrival), and the deadbolt is locked. If the door was already unlocked when approaching, the unlock action is safely skipped. Calibrate the RSSI threshold with the phone actually by the door; do not lower it merely to force a test to pass. BLE beacons are not authenticated credentials, and location accuracy still matters.
 
 These guards apply to newly generated automations. Existing saved automations are not silently overwritten by an integration update; review and update their configuration separately. A controlled test with an isolated temporary tracker can verify arrival processing and the real Bluetooth/lock path without changing the phone's GPS, but cannot prove real location updates or background tracking. Keep physical unlock tests separately authorized and remove temporary test entities afterwards.
 
@@ -192,10 +192,13 @@ The selected lock has no installed offline key available to this account. The lo
 ### Auto-unlock not working
 
 - Companion app must be running with Bluetooth enabled
+- Allow precise location all the time and unrestricted background battery usage; enable Background location, Location zone and Single accurate location
+- Check Companion app troubleshooting → Location tracking for failed deliveries, and confirm HA actually records departure and return
 - Check that your home zone is correctly configured in HA
 - Verify the BLE proxy is within range
 - Check that automations were created in Home Assistant
 - Check that the arrival automation is enabled and the phone was actually away for the configured minimum time
+- After enabling or reloading, begin a new departure from home; an already-away phone intentionally cannot arm unlocking
 - Verify the near-door sensor turns on with fresh samples at the door; a transmitting phone can still be below the calibrated RSSI threshold
 - Do not use an automation's manual Run button as proof of arrival: it may skip trigger conditions or lack the required state-trigger context
 
