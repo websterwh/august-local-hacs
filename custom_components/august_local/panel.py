@@ -1,5 +1,6 @@
 """Authenticated local PIN manager API and custom HA panel."""
 
+import json
 import asyncio
 import logging
 from pathlib import Path
@@ -149,13 +150,21 @@ async def setup_panel(hass, entry):
                 )
             ]
         )
+        version = "0.10.12"
+        try:
+            manifest_file = Path(__file__).parent / "manifest.json"
+            if manifest_file.exists():
+                version = json.loads(manifest_file.read_text(encoding="utf-8")).get("version", version)
+        except Exception:
+            pass
+
         await panel_custom.async_register_panel(
             hass,
             frontend_url_path="august-local-keypad",
             webcomponent_name="august-pin-manager",
             sidebar_title="Door PINs",
             sidebar_icon="mdi:dialpad",
-            module_url="/august-local-keypad/panel.js",
+            module_url=f"/august-local-keypad/panel.js?v={version}",
         )
         hass.data[DOMAIN]["panel_registered"] = True
 
