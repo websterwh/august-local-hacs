@@ -154,14 +154,17 @@ async function main() {
     assert.match(recheck,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) >= 0/);
     assert.match(recheck,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) < 10/);
     // The unlock path only runs after proximity is accepted and the lock is locked.
-    const unlockPath=automation.actions[9].choose[0];
+    assert.equal(automation.actions[9].action,'august_local.status');
+    assert.equal(automation.actions[10].action,'system_log.write');
+    assert.match(automation.actions[10].data.message,/refreshed physical lock state/);
+    const unlockPath=automation.actions[11].choose[0];
     assert.equal(unlockPath.conditions[0].condition,'state');
     assert.equal(unlockPath.conditions[0].entity_id,'lock.test');
     assert.equal(unlockPath.conditions[0].state,'locked');
     assert.equal(unlockPath.sequence[0].action,'system_log.write');
     assert.equal(unlockPath.sequence[1].action,'lock.unlock');
     assert.equal(unlockPath.sequence[1].target.entity_id,'lock.test');
-    assert.match(automation.actions[9].default[0].data.message,/unlock skipped/);
+    assert.match(automation.actions[11].default[0].data.message,/unlock skipped/);
   }
   function runner() {
     const ui=new context.Panel();
