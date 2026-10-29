@@ -103,10 +103,10 @@ async function main() {
   const automation=context.makeArrival('person.test','lock.test',300,'binary_sensor.near');
   assert.equal(automation.initial_state,false);
   assert.equal(automation.mode,'restart');
-  assert.equal(automation.actions[4].continue_on_timeout,false);
-  assert.equal(automation.actions[4].timeout,'00:30:00');
-  assert.match(automation.actions[4].wait_template,/last_seen/);
-  assert.match(automation.actions[4].wait_template,/>= \(arrival_at \| float\)/);
+  assert.equal(automation.actions[6].continue_on_timeout,true);
+  assert.equal(automation.actions[6].timeout,'00:30:00');
+  assert.match(automation.actions[6].wait_template,/last_seen/);
+  assert.match(automation.actions[6].wait_template,/>= \(arrival_at \| float\)/);
   assert.throws(()=>context.makeArrival('person.test','lock.test',300,''));
   {
     // Forced GPS reports reset last_changed even without changing displayed home/away.
@@ -130,29 +130,38 @@ async function main() {
     assert.match(cond,/trigger\.from_state\.state == 'home'/);
     assert.match(cond,/trigger\.to_state\.state not in \['home', 'unknown', 'unavailable'\]/);
     // A return must follow arming; unknown/unavailable cannot become an arrival.
-    assert.match(automation.actions[1].wait_template,/in \['home', 'unknown', 'unavailable'\]/);
-    assert.equal(automation.actions[2].condition,'state');
-    assert.equal(automation.actions[2].state,'home');
-    assert.match(automation.actions[3].variables.arrival_at,/as_timestamp\(now\(\)\)/);
+    assert.equal(automation.actions[1].action,'system_log.write');
+    assert.match(automation.actions[1].data.message,/armed after 300s continuously away/);
+    assert.match(automation.actions[2].wait_template,/in \['home', 'unknown', 'unavailable'\]/);
+    assert.equal(automation.actions[3].condition,'state');
+    assert.equal(automation.actions[3].state,'home');
+    assert.match(automation.actions[4].variables.arrival_at,/as_timestamp\(now\(\)\)/);
+    assert.equal(automation.actions[5].action,'system_log.write');
+    assert.match(automation.actions[5].data.message,/waiting up to 30m/);
     // no-future freshness in wait_template: age >= 0
-    const wt=automation.actions[4].wait_template;
+    const wt=automation.actions[6].wait_template;
     assert.match(wt,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) >= 0/);
     assert.match(wt,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) < 10/);
     // Departure wakes the wait and cancels the run even for a subsequent short trip.
     assert.match(wt,/not is_state\('person\.test', 'home'\) or/);
-    const recheck=automation.actions[5].value_template;
-    assert.equal(automation.actions[5].condition,'template');
+    assert.equal(automation.actions[7].action,'system_log.write');
+    assert.match(automation.actions[7].data.message,/proximity wait completed/);
+    const recheck=automation.actions[8].value_template;
+    assert.equal(automation.actions[8].condition,'template');
     assert.match(recheck,/is_state\('person\.test', 'home'\)/);
     assert.match(recheck,/arrival_at is defined and is_number\(arrival_at\)/);
     assert.match(recheck,/is_state\('binary_sensor\.near', 'on'\)/);
     assert.match(recheck,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) >= 0/);
     assert.match(recheck,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) < 10/);
-    // locked-state check and unlock action at correct positions
-    assert.equal(automation.actions[7].condition,'state');
-    assert.equal(automation.actions[7].entity_id,'lock.test');
-    assert.equal(automation.actions[7].state,'locked');
-    assert.equal(automation.actions[8].action,'lock.unlock');
-    assert.equal(automation.actions[8].target.entity_id,'lock.test');
+    // The unlock path only runs after proximity is accepted and the lock is locked.
+    const unlockPath=automation.actions[9].choose[0];
+    assert.equal(unlockPath.conditions[0].condition,'state');
+    assert.equal(unlockPath.conditions[0].entity_id,'lock.test');
+    assert.equal(unlockPath.conditions[0].state,'locked');
+    assert.equal(unlockPath.sequence[0].action,'system_log.write');
+    assert.equal(unlockPath.sequence[1].action,'lock.unlock');
+    assert.equal(unlockPath.sequence[1].target.entity_id,'lock.test');
+    assert.match(automation.actions[9].default[0].data.message,/unlock skipped/);
   }
   function runner() {
     const ui=new context.Panel();
