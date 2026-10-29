@@ -104,7 +104,7 @@ async function main() {
   assert.equal(automation.initial_state,false);
   assert.equal(automation.mode,'restart');
   assert.equal(automation.actions[6].continue_on_timeout,true);
-  assert.equal(automation.actions[6].timeout,'00:02:00');
+  assert.equal(automation.actions[6].timeout,'00:30:00');
   assert.match(automation.actions[6].wait_template,/last_seen/);
   assert.match(automation.actions[6].wait_template,/>= \(arrival_at \| float\)/);
   assert.throws(()=>context.makeArrival('person.test','lock.test',300,''));
@@ -137,7 +137,7 @@ async function main() {
     assert.equal(automation.actions[3].state,'home');
     assert.match(automation.actions[4].variables.arrival_at,/as_timestamp\(now\(\)\)/);
     assert.equal(automation.actions[5].action,'system_log.write');
-    assert.match(automation.actions[5].data.message,/waiting up to 2m/);
+    assert.match(automation.actions[5].data.message,/waiting up to 30m/);
     // no-future freshness in wait_template: age >= 0
     const wt=automation.actions[6].wait_template;
     assert.match(wt,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) >= 0/);
@@ -154,7 +154,7 @@ async function main() {
     assert.match(recheck,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) >= 0/);
     assert.match(recheck,/\(as_timestamp\(now\(\)\) - as_timestamp\(state_attr\('binary_sensor\.near', 'last_seen'\), none\)\) < 10/);
     assert.match(recheck,/states\['binary_sensor\.near'\]\.last_changed/);
-    assert.match(recheck,/<= 120/);
+    assert.match(recheck,/<= 1800/);
     // The unlock path only runs after proximity is accepted and the lock is locked.
     assert.equal(automation.actions[9].action,'august_local.status');
     assert.equal(automation.actions[10].action,'system_log.write');
